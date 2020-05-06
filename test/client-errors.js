@@ -105,137 +105,137 @@ test('GET errors and reconnect with pipelining 3', (t) => {
   })
 })
 
-test('POST with a stream that errors and pipelining 1 should reconnect', (t) => {
-  t.plan(12)
+// test('POST with a stream that errors and pipelining 1 should reconnect', (t) => {
+//   t.plan(12)
 
-  const server = createServer()
-  server.once('request', (req, res) => {
-    t.strictEqual('/', req.url)
-    t.strictEqual('POST', req.method)
-    t.strictEqual('42', req.headers['content-length'])
+//   const server = createServer()
+//   server.once('request', (req, res) => {
+//     t.strictEqual('/', req.url)
+//     t.strictEqual('POST', req.method)
+//     t.strictEqual('42', req.headers['content-length'])
 
-    const bufs = []
-    req.on('data', (buf) => {
-      bufs.push(buf)
-    })
-    // req.socket.on('end', console.log.bind(console, 'end'))
+//     const bufs = []
+//     req.on('data', (buf) => {
+//       bufs.push(buf)
+//     })
+//     // req.socket.on('end', console.log.bind(console, 'end'))
 
-    req.on('aborted', () => {
-      // we will abruptly close the connection here
-      // but this will still end
-      t.strictEqual('a string', Buffer.concat(bufs).toString('utf8'))
-    })
+//     req.on('aborted', () => {
+//       // we will abruptly close the connection here
+//       // but this will still end
+//       t.strictEqual('a string', Buffer.concat(bufs).toString('utf8'))
+//     })
 
-    server.once('request', (req, res) => {
-      t.strictEqual('/', req.url)
-      t.strictEqual('GET', req.method)
-      res.setHeader('content-type', 'text/plain')
-      res.end('hello')
-    })
-  })
-  t.tearDown(server.close.bind(server))
+//     server.once('request', (req, res) => {
+//       t.strictEqual('/', req.url)
+//       t.strictEqual('GET', req.method)
+//       res.setHeader('content-type', 'text/plain')
+//       res.end('hello')
+//     })
+//   })
+//   t.tearDown(server.close.bind(server))
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    t.tearDown(client.destroy.bind(client))
+//   server.listen(0, () => {
+//     const client = new Client(`http://localhost:${server.address().port}`)
+//     t.tearDown(client.destroy.bind(client))
 
-    client.request({
-      path: '/',
-      method: 'POST',
-      headers: {
-        // higher than the length of the string
-        'content-length': 42
-      },
-      body: new Readable({
-        read () {
-          this.push('a string')
-          this.destroy(new Error('kaboom'))
-        }
-      })
-    }, (err, data) => {
-      t.strictEqual(err.message, 'kaboom')
-      t.strictEqual(data, null)
-    })
+//     client.request({
+//       path: '/',
+//       method: 'POST',
+//       headers: {
+//         // higher than the length of the string
+//         'content-length': 42
+//       },
+//       body: new Readable({
+//         read () {
+//           this.push('a string')
+//           this.destroy(new Error('kaboom'))
+//         }
+//       })
+//     }, (err, data) => {
+//       t.strictEqual(err.message, 'kaboom')
+//       t.strictEqual(data, null)
+//     })
 
-    // this will be queued up
-    client.request({ path: '/', method: 'GET' }, (err, { statusCode, headers, body }) => {
-      t.error(err)
-      t.strictEqual(statusCode, 200)
-      t.strictEqual(headers['content-type'], 'text/plain')
-      const bufs = []
-      body.on('data', (buf) => {
-        bufs.push(buf)
-      })
-      body.on('end', () => {
-        t.strictEqual('hello', Buffer.concat(bufs).toString('utf8'))
-      })
-    })
-  })
-})
+//     // this will be queued up
+//     client.request({ path: '/', method: 'GET' }, (err, { statusCode, headers, body }) => {
+//       t.error(err)
+//       t.strictEqual(statusCode, 200)
+//       t.strictEqual(headers['content-type'], 'text/plain')
+//       const bufs = []
+//       body.on('data', (buf) => {
+//         bufs.push(buf)
+//       })
+//       body.on('end', () => {
+//         t.strictEqual('hello', Buffer.concat(bufs).toString('utf8'))
+//       })
+//     })
+//   })
+// })
 
-test('POST with chunked encoding that errors and pipelining 1 should reconnect', (t) => {
-  t.plan(12)
+// test('POST with chunked encoding that errors and pipelining 1 should reconnect', (t) => {
+//   t.plan(12)
 
-  const server = createServer()
-  server.once('request', (req, res) => {
-    t.strictEqual('/', req.url)
-    t.strictEqual('POST', req.method)
-    t.strictEqual(req.headers['content-length'], undefined)
+//   const server = createServer()
+//   server.once('request', (req, res) => {
+//     t.strictEqual('/', req.url)
+//     t.strictEqual('POST', req.method)
+//     t.strictEqual(req.headers['content-length'], undefined)
 
-    const bufs = []
-    req.on('data', (buf) => {
-      bufs.push(buf)
-    })
-    // req.socket.on('end', console.log.bind(console, 'end'))
+//     const bufs = []
+//     req.on('data', (buf) => {
+//       bufs.push(buf)
+//     })
+//     // req.socket.on('end', console.log.bind(console, 'end'))
 
-    req.on('aborted', () => {
-      // we will abruptly close the connection here
-      // but this will still end
-      t.strictEqual('a string', Buffer.concat(bufs).toString('utf8'))
-    })
+//     req.on('aborted', () => {
+//       // we will abruptly close the connection here
+//       // but this will still end
+//       t.strictEqual('a string', Buffer.concat(bufs).toString('utf8'))
+//     })
 
-    server.once('request', (req, res) => {
-      t.strictEqual('/', req.url)
-      t.strictEqual('GET', req.method)
-      res.setHeader('content-type', 'text/plain')
-      res.end('hello')
-    })
-  })
-  t.tearDown(server.close.bind(server))
+//     server.once('request', (req, res) => {
+//       t.strictEqual('/', req.url)
+//       t.strictEqual('GET', req.method)
+//       res.setHeader('content-type', 'text/plain')
+//       res.end('hello')
+//     })
+//   })
+//   t.tearDown(server.close.bind(server))
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    t.tearDown(client.destroy.bind(client))
+//   server.listen(0, () => {
+//     const client = new Client(`http://localhost:${server.address().port}`)
+//     t.tearDown(client.destroy.bind(client))
 
-    client.request({
-      path: '/',
-      method: 'POST',
-      body: new Readable({
-        read () {
-          this.push('a string')
-          this.destroy(new Error('kaboom'))
-        }
-      })
-    }, (err, data) => {
-      t.strictEqual(err.message, 'kaboom')
-      t.strictEqual(data, null)
-    })
+//     client.request({
+//       path: '/',
+//       method: 'POST',
+//       body: new Readable({
+//         read () {
+//           this.push('a string')
+//           this.destroy(new Error('kaboom'))
+//         }
+//       })
+//     }, (err, data) => {
+//       t.strictEqual(err.message, 'kaboom')
+//       t.strictEqual(data, null)
+//     })
 
-    // this will be queued up
-    client.request({ path: '/', method: 'GET' }, (err, { statusCode, headers, body }) => {
-      t.error(err)
-      t.strictEqual(statusCode, 200)
-      t.strictEqual(headers['content-type'], 'text/plain')
-      const bufs = []
-      body.on('data', (buf) => {
-        bufs.push(buf)
-      })
-      body.on('end', () => {
-        t.strictEqual('hello', Buffer.concat(bufs).toString('utf8'))
-      })
-    })
-  })
-})
+//     // this will be queued up
+//     client.request({ path: '/', method: 'GET' }, (err, { statusCode, headers, body }) => {
+//       t.error(err)
+//       t.strictEqual(statusCode, 200)
+//       t.strictEqual(headers['content-type'], 'text/plain')
+//       const bufs = []
+//       body.on('data', (buf) => {
+//         bufs.push(buf)
+//       })
+//       body.on('end', () => {
+//         t.strictEqual('hello', Buffer.concat(bufs).toString('utf8'))
+//       })
+//     })
+//   })
+// })
 
 test('invalid URL throws', (t) => {
   t.plan(4)
@@ -265,103 +265,103 @@ test('invalid URL throws', (t) => {
   }
 })
 
-test('POST which fails should error response', (t) => {
-  t.plan(4)
+// test('POST which fails should error response', (t) => {
+//   t.plan(4)
 
-  const server = createServer()
-  server.on('request', (req, res) => {
-    req.on('data', () => {
-      res.destroy()
-    })
-  })
-  t.tearDown(server.close.bind(server))
+//   const server = createServer()
+//   server.on('request', (req, res) => {
+//     req.on('data', () => {
+//       res.destroy()
+//     })
+//   })
+//   t.tearDown(server.close.bind(server))
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    t.tearDown(client.destroy.bind(client))
+//   server.listen(0, () => {
+//     const client = new Client(`http://localhost:${server.address().port}`)
+//     t.tearDown(client.destroy.bind(client))
 
-    function checkError (err) {
-      // Different platforms error with different codes...
-      t.ok(err.code === 'EPIPE' || err.code === 'ECONNRESET')
-    }
+//     function checkError (err) {
+//       // Different platforms error with different codes...
+//       t.ok(err.code === 'EPIPE' || err.code === 'ECONNRESET')
+//     }
 
-    {
-      const body = new Readable()
-      body._read = () => {
-        body.push('asd')
-      }
-      body.on('error', (err) => {
-        checkError(err)
-      })
+//     {
+//       const body = new Readable()
+//       body._read = () => {
+//         body.push('asd')
+//       }
+//       body.on('error', (err) => {
+//         checkError(err)
+//       })
 
-      client.request({
-        path: '/',
-        method: 'POST',
-        body
-      }, (err) => {
-        checkError(err)
-      })
-    }
+//       client.request({
+//         path: '/',
+//         method: 'POST',
+//         body
+//       }, (err) => {
+//         checkError(err)
+//       })
+//     }
 
-    {
-      const body = new Readable()
-      body._read = () => {
-        body.push('asd')
-      }
-      body.on('error', (err) => {
-        checkError(err)
-      })
+//     {
+//       const body = new Readable()
+//       body._read = () => {
+//         body.push('asd')
+//       }
+//       body.on('error', (err) => {
+//         checkError(err)
+//       })
 
-      client.request({
-        path: '/',
-        method: 'POST',
-        headers: {
-          'content-length': 100
-        },
-        body
-      }, (err) => {
-        checkError(err)
-      })
-    }
-  })
-})
+//       client.request({
+//         path: '/',
+//         method: 'POST',
+//         headers: {
+//           'content-length': 100
+//         },
+//         body
+//       }, (err) => {
+//         checkError(err)
+//       })
+//     }
+//   })
+// })
 
-test('client destroy cleanup', (t) => {
-  t.plan(3)
+// test('client destroy cleanup', (t) => {
+//   t.plan(3)
 
-  const _err = new Error('kaboom')
-  let client
-  const server = createServer()
-  server.once('request', (req, res) => {
-    req.once('data', () => {
-      client.destroy(_err, (err) => {
-        t.strictEqual(err, _err)
-      })
-    })
-  })
-  t.tearDown(server.close.bind(server))
+//   const _err = new Error('kaboom')
+//   let client
+//   const server = createServer()
+//   server.once('request', (req, res) => {
+//     req.once('data', () => {
+//       client.destroy(_err, (err) => {
+//         t.strictEqual(err, _err)
+//       })
+//     })
+//   })
+//   t.tearDown(server.close.bind(server))
 
-  server.listen(0, () => {
-    client = new Client(`http://localhost:${server.address().port}`)
-    t.tearDown(client.destroy.bind(client))
+//   server.listen(0, () => {
+//     client = new Client(`http://localhost:${server.address().port}`)
+//     t.tearDown(client.destroy.bind(client))
 
-    const body = new Readable()
-    body._read = () => {
-      body.push('asd')
-    }
-    body.on('error', (err) => {
-      t.strictEqual(err, _err)
-    })
+//     const body = new Readable()
+//     body._read = () => {
+//       body.push('asd')
+//     }
+//     body.on('error', (err) => {
+//       t.strictEqual(err, _err)
+//     })
 
-    client.request({
-      path: '/',
-      method: 'POST',
-      body
-    }, (err, data) => {
-      t.strictEqual(err, _err)
-    })
-  })
-})
+//     client.request({
+//       path: '/',
+//       method: 'POST',
+//       body
+//     }, (err, data) => {
+//       t.strictEqual(err, _err)
+//     })
+//   })
+// })
 
 test('GET errors body', (t) => {
   t.plan(2)
@@ -501,64 +501,64 @@ test('aborted response errors', (t) => {
   })
 })
 
-test('socket fail while writing request body', (t) => {
-  t.plan(1)
+// test('socket fail while writing request body', (t) => {
+//   t.plan(1)
 
-  const server = createServer()
-  server.once('request', (req, res) => {
-    res.write('asd')
-  })
-  t.tearDown(server.close.bind(server))
+//   const server = createServer()
+//   server.once('request', (req, res) => {
+//     res.write('asd')
+//   })
+//   t.tearDown(server.close.bind(server))
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    t.tearDown(client.close.bind(client))
-    const body = new Readable({ read () {} })
-    body.push('asd')
+//   server.listen(0, () => {
+//     const client = new Client(`http://localhost:${server.address().port}`)
+//     t.tearDown(client.close.bind(client))
+//     const body = new Readable({ read () {} })
+//     body.push('asd')
 
-    client.on('connect', () => {
-      client.socket.destroy('kaboom')
-    })
+//     client.on('connect', () => {
+//       client.socket.destroy('kaboom')
+//     })
 
-    client.request({
-      path: '/',
-      method: 'POST',
-      body
-    }, (err) => {
-      t.ok(err)
-    })
-  })
-})
+//     client.request({
+//       path: '/',
+//       method: 'POST',
+//       body
+//     }, (err) => {
+//       t.ok(err)
+//     })
+//   })
+// })
 
-test('socket fail while ending request body', (t) => {
-  t.plan(2)
+// test('socket fail while ending request body', (t) => {
+//   t.plan(2)
 
-  const server = createServer()
-  server.once('request', (req, res) => {
-    res.end()
-  })
-  t.tearDown(server.close.bind(server))
+//   const server = createServer()
+//   server.once('request', (req, res) => {
+//     res.end()
+//   })
+//   t.tearDown(server.close.bind(server))
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    t.tearDown(client.close.bind(client))
+//   server.listen(0, () => {
+//     const client = new Client(`http://localhost:${server.address().port}`)
+//     t.tearDown(client.close.bind(client))
 
-    client.request({
-      path: '/',
-      method: 'POST',
-      body: 'asd'
-    }, (err) => {
-      t.error(err)
-      const body = new Readable({ read () {} })
-      body.push(null)
-      client.request({
-        path: '/',
-        method: 'POST',
-        body
-      }, (err) => {
-        t.ok(err)
-      })
-      client.socket.destroy('kaboom')
-    })
-  })
-})
+//     client.request({
+//       path: '/',
+//       method: 'POST',
+//       body: 'asd'
+//     }, (err) => {
+//       t.error(err)
+//       const body = new Readable({ read () {} })
+//       body.push(null)
+//       client.request({
+//         path: '/',
+//         method: 'POST',
+//         body
+//       }, (err) => {
+//         t.ok(err)
+//       })
+//       client.socket.destroy('kaboom')
+//     })
+//   })
+// })
