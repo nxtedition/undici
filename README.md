@@ -381,6 +381,10 @@ Calls [`client.request(req, callback)`][request] on one of the clients.
 
 Calls [`client.stream(req, factory, callback)`][stream] on one of the clients.
 
+#### `pool.pipeline(req, handler)`
+
+Calls [`client.pipeline(req, handler)`][pipeline] on one of the clients.
+
 #### `pool.close([callback])`
 
 Calls [`client.close(callback)`](#close) on all the clients.
@@ -414,3 +418,5 @@ MIT
 
 [`Client`]: #client
 [request]: #request
+[stream]: #stream
+[pipeline]: #pipeline
