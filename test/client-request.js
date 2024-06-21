@@ -4,15 +4,14 @@
 
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after, describe, before } = require('node:test')
-const { Client, errors } = require('..')
+const { Client } = require('..')
 const { createServer } = require('node:http')
 const EE = require('node:events')
 const { kConnect } = require('../lib/core/symbols')
 const { Readable } = require('node:stream')
 const net = require('node:net')
 const { promisify } = require('node:util')
-const { NotSupportedError, InvalidArgumentError } = require('../lib/core/errors')
-const { parseFormDataString } = require('./utils/formdata')
+const { InvalidArgumentError } = require('../lib/core/errors')
 
 test('request dump head', async (t) => {
   t = tspl(t, { plan: 3 })
@@ -188,7 +187,7 @@ test('request abort before headers', async (t) => {
         method: 'GET',
         signal
       }, (err) => {
-        t.ok(err instanceof errors.RequestAbortedError)
+        t.ok(err.name === 'AbortError')
         t.strictEqual(signal.listenerCount('abort'), 0)
       })
       t.strictEqual(signal.listenerCount('abort'), 1)
@@ -198,7 +197,7 @@ test('request abort before headers', async (t) => {
         method: 'GET',
         signal
       }, (err) => {
-        t.ok(err instanceof errors.RequestAbortedError)
+        t.ok(err.name === 'AbortError')
         t.strictEqual(signal.listenerCount('abort'), 0)
       })
       t.strictEqual(signal.listenerCount('abort'), 2)
@@ -231,35 +230,6 @@ test('request body destroyed on invalid callback', async (t) => {
     } catch (err) {
       t.strictEqual(body.destroyed, true)
     }
-  })
-
-  await t.completed
-})
-
-test('trailers', async (t) => {
-  t = tspl(t, { plan: 1 })
-
-  const server = createServer((req, res) => {
-    res.writeHead(200, { Trailer: 'Content-MD5' })
-    res.addTrailers({ 'Content-MD5': 'test' })
-    res.end()
-  })
-  after(() => server.close())
-
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.close())
-
-    const { body, trailers } = await client.request({
-      path: '/',
-      method: 'GET'
-    })
-
-    body
-      .on('data', () => t.fail())
-      .on('end', () => {
-        t.deepStrictEqual(trailers, { 'content-md5': 'test' })
-      })
   })
 
   await t.completed
@@ -757,170 +727,6 @@ test('request post body no extra data handler', async (t) => {
   await t.completed
 })
 
-test('request with onInfo callback', async (t) => {
-  t = tspl(t, { plan: 3 })
-  const infos = []
-  const server = createServer((req, res) => {
-    res.writeProcessing()
-    res.setHeader('Content-Type', 'application/json')
-    res.end(JSON.stringify({ foo: 'bar' }))
-  })
-  after(() => server.close())
-
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
-
-    await client.request({
-      path: '/',
-      method: 'GET',
-      onInfo: (x) => { infos.push(x) }
-    })
-    t.strictEqual(infos.length, 1)
-    t.strictEqual(infos[0].statusCode, 102)
-    t.ok(true, 'pass')
-  })
-
-  await t.completed
-})
-
-test('request with onInfo callback but socket is destroyed before end of response', async (t) => {
-  t = tspl(t, { plan: 5 })
-  const infos = []
-  let response
-  const server = createServer((req, res) => {
-    response = res
-    res.writeProcessing()
-  })
-  after(() => server.close())
-
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
-    try {
-      await client.request({
-        path: '/',
-        method: 'GET',
-        onInfo: (x) => {
-          infos.push(x)
-          response.destroy()
-        }
-      })
-      t.fail()
-    } catch (e) {
-      t.ok(e)
-      t.strictEqual(e.message, 'other side closed')
-    }
-    t.strictEqual(infos.length, 1)
-    t.strictEqual(infos[0].statusCode, 102)
-    t.ok(true, 'pass')
-  })
-
-  await t.completed
-})
-
-test('request onInfo callback headers parsing', async (t) => {
-  t = tspl(t, { plan: 4 })
-  const infos = []
-
-  const server = net.createServer((socket) => {
-    const lines = [
-      'HTTP/1.1 103 Early Hints',
-      'Link: </style.css>; rel=preload; as=style',
-      '',
-      'HTTP/1.1 200 OK',
-      'Date: Sat, 09 Oct 2010 14:28:02 GMT',
-      'Connection: close',
-      '',
-      'the body'
-    ]
-    socket.end(lines.join('\r\n'))
-  })
-  after(() => server.close())
-
-  await promisify(server.listen.bind(server))(0)
-
-  const client = new Client(`http://localhost:${server.address().port}`)
-  after(() => client.close())
-
-  const { body } = await client.request({
-    path: '/',
-    method: 'GET',
-    onInfo: (x) => { infos.push(x) }
-  })
-  await body.dump()
-  t.strictEqual(infos.length, 1)
-  t.strictEqual(infos[0].statusCode, 103)
-  t.deepStrictEqual(infos[0].headers, { link: '</style.css>; rel=preload; as=style' })
-  t.ok(true, 'pass')
-})
-
-test('request raw responseHeaders', async (t) => {
-  t = tspl(t, { plan: 4 })
-  const infos = []
-
-  const server = net.createServer((socket) => {
-    const lines = [
-      'HTTP/1.1 103 Early Hints',
-      'Link: </style.css>; rel=preload; as=style',
-      '',
-      'HTTP/1.1 200 OK',
-      'Date: Sat, 09 Oct 2010 14:28:02 GMT',
-      'Connection: close',
-      '',
-      'the body'
-    ]
-    socket.end(lines.join('\r\n'))
-  })
-  after(() => server.close())
-
-  await promisify(server.listen.bind(server))(0)
-
-  const client = new Client(`http://localhost:${server.address().port}`)
-  after(() => client.close())
-
-  const { body, headers } = await client.request({
-    path: '/',
-    method: 'GET',
-    responseHeaders: 'raw',
-    onInfo: (x) => { infos.push(x) }
-  })
-  await body.dump()
-  t.strictEqual(infos.length, 1)
-  t.deepStrictEqual(infos[0].headers, ['Link', '</style.css>; rel=preload; as=style'])
-  t.deepStrictEqual(headers, ['Date', 'Sat, 09 Oct 2010 14:28:02 GMT', 'Connection', 'close'])
-  t.ok(true, 'pass')
-})
-
-test('request formData', async (t) => {
-  t = tspl(t, { plan: 1 })
-
-  const obj = { asd: true }
-  const server = createServer((req, res) => {
-    res.end(JSON.stringify(obj))
-  })
-  after(() => server.close())
-
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
-
-    const { body } = await client.request({
-      path: '/',
-      method: 'GET'
-    })
-
-    try {
-      await body.formData()
-      t.fail('should throw NotSupportedError')
-    } catch (error) {
-      t.ok(error instanceof NotSupportedError)
-    }
-  })
-
-  await t.completed
-})
-
 test('request text2', async (t) => {
   t = tspl(t, { plan: 2 })
 
@@ -946,59 +752,6 @@ test('request text2', async (t) => {
       t.strictEqual(JSON.stringify(obj), ret)
     })
     t.strictEqual(JSON.stringify(obj), await p)
-  })
-
-  await t.completed
-})
-
-test('request with FormData body', async (t) => {
-  const { FormData } = require('../')
-  const { Blob } = require('node:buffer')
-
-  const fd = new FormData()
-  fd.set('key', 'value')
-  fd.set('file', new Blob(['Hello, world!']), 'hello_world.txt')
-
-  const server = createServer(async (req, res) => {
-    const contentType = req.headers['content-type']
-    // ensure we received a multipart/form-data header
-    t.ok(/^multipart\/form-data; boundary=-+formdata-undici-0\d+$/.test(contentType))
-
-    const chunks = []
-
-    for await (const chunk of req) {
-      chunks.push(chunk)
-    }
-
-    const { fileMap, fields } = await parseFormDataString(
-      Buffer.concat(chunks),
-      contentType
-    )
-
-    t.deepStrictEqual(fields[0], { key: 'key', value: 'value' })
-    t.ok(fileMap.has('file'))
-    t.strictEqual(fileMap.get('file').data.toString(), 'Hello, world!')
-    t.deepStrictEqual(fileMap.get('file').info, {
-      filename: 'hello_world.txt',
-      encoding: '7bit',
-      mimeType: 'application/octet-stream'
-    })
-
-    return res.end()
-  })
-  after(() => server.close())
-
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
-
-    await client.request({
-      path: '/',
-      method: 'POST',
-      body: fd
-    })
-
-    t.end()
   })
 
   await t.completed

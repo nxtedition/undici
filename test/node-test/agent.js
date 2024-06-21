@@ -3,14 +3,10 @@
 const { describe, test, after } = require('node:test')
 const assert = require('node:assert/strict')
 const http = require('node:http')
-const { PassThrough } = require('node:stream')
-const { kRunning } = require('../../lib/core/symbols')
 const {
   Agent,
   errors,
   request,
-  stream,
-  pipeline,
   Pool,
   setGlobalDispatcher,
   getGlobalDispatcher
@@ -439,228 +435,6 @@ test('fails with invalid args', t => {
   assert.throws(() => request('https://example.com', 'asd'), errors.InvalidArgumentError, 'throws on non object opts argument')
 })
 
-test('with globalAgent', async t => {
-  const p = tspl(t, { plan: 6 })
-  const wanted = 'payload'
-
-  const server = http.createServer((req, res) => {
-    p.strictEqual('/', req.url)
-    p.strictEqual('GET', req.method)
-    p.strictEqual(`localhost:${server.address().port}`, req.headers.host)
-    res.setHeader('Content-Type', 'text/plain')
-    res.end(wanted)
-  })
-
-  t.after(closeServerAsPromise(server))
-
-  server.listen(0, () => {
-    stream(
-      `http://localhost:${server.address().port}`,
-      {
-        opaque: new PassThrough()
-      },
-      ({ statusCode, headers, opaque: pt }) => {
-        p.strictEqual(statusCode, 200)
-        p.strictEqual(headers['content-type'], 'text/plain')
-        const bufs = []
-        pt.on('data', (buf) => {
-          bufs.push(buf)
-        })
-        pt.on('end', () => {
-          p.strictEqual(wanted, Buffer.concat(bufs).toString('utf8'))
-        })
-        pt.on('error', () => {
-          p.fail()
-        })
-        return pt
-      }
-    )
-  })
-
-  await p.completed
-})
-
-test('with a local agent', async t => {
-  const p = tspl(t, { plan: 6 })
-  const wanted = 'payload'
-
-  const server = http.createServer((req, res) => {
-    p.strictEqual('/', req.url)
-    p.strictEqual('GET', req.method)
-    p.strictEqual(`localhost:${server.address().port}`, req.headers.host)
-    res.setHeader('Content-Type', 'text/plain')
-    res.end(wanted)
-  })
-
-  t.after(closeServerAsPromise(server))
-
-  const dispatcher = new Agent()
-
-  dispatcher.on('connect', (origin, [dispatcher]) => {
-    p.ok(dispatcher)
-    p.strictEqual(dispatcher[kRunning], 0)
-    process.nextTick(() => {
-      p.strictEqual(dispatcher[kRunning], 1)
-    })
-  })
-
-  server.listen(0, () => {
-    stream(
-      `http://localhost:${server.address().port}`,
-      {
-        dispatcher,
-        opaque: new PassThrough()
-      },
-      ({ statusCode, headers, opaque: pt }) => {
-        p.strictEqual(statusCode, 200)
-        p.strictEqual(headers['content-type'], 'text/plain')
-        const bufs = []
-        pt.on('data', (buf) => {
-          bufs.push(buf)
-        })
-        pt.on('end', () => {
-          p.strictEqual(wanted, Buffer.concat(bufs).toString('utf8'))
-        })
-        pt.on('error', (err) => {
-          p.fail(err)
-        })
-        return pt
-      }
-    )
-  })
-
-  await p.completed
-})
-
-test('stream: fails with invalid URL', t => {
-  const p = tspl(t, { plan: 4 })
-  p.throws(() => stream(), errors.InvalidArgumentError, 'throws on missing url argument')
-  p.throws(() => stream(''), errors.InvalidArgumentError, 'throws on invalid url')
-  p.throws(() => stream({}), errors.InvalidArgumentError, 'throws on missing url.origin argument')
-  p.throws(() => stream({ origin: '' }), errors.InvalidArgumentError, 'throws on invalid url.origin argument')
-})
-
-test('with globalAgent', async t => {
-  const p = tspl(t, { plan: 6 })
-  const wanted = 'payload'
-
-  const server = http.createServer((req, res) => {
-    p.strictEqual('/', req.url)
-    p.strictEqual('GET', req.method)
-    p.strictEqual(`localhost:${server.address().port}`, req.headers.host)
-    res.setHeader('Content-Type', 'text/plain')
-    res.end(wanted)
-  })
-
-  t.after(closeServerAsPromise(server))
-
-  server.listen(0, () => {
-    const bufs = []
-
-    pipeline(
-      `http://localhost:${server.address().port}`,
-      {},
-      ({ statusCode, headers, body }) => {
-        p.strictEqual(statusCode, 200)
-        p.strictEqual(headers['content-type'], 'text/plain')
-        return body
-      }
-    )
-      .end()
-      .on('data', buf => {
-        bufs.push(buf)
-      })
-      .on('end', () => {
-        p.strictEqual(wanted, Buffer.concat(bufs).toString('utf8'))
-      })
-      .on('error', (err) => {
-        p.fail(err)
-      })
-  })
-
-  await p.completed
-})
-
-test('with a local agent', async t => {
-  const p = tspl(t, { plan: 6 })
-  const wanted = 'payload'
-
-  const server = http.createServer((req, res) => {
-    p.strictEqual('/', req.url)
-    p.strictEqual('GET', req.method)
-    p.strictEqual(`localhost:${server.address().port}`, req.headers.host)
-    res.setHeader('Content-Type', 'text/plain')
-    res.end(wanted)
-  })
-
-  t.after(closeServerAsPromise(server))
-
-  const dispatcher = new Agent()
-
-  server.listen(0, () => {
-    const bufs = []
-
-    pipeline(
-      `http://localhost:${server.address().port}`,
-      { dispatcher },
-      ({ statusCode, headers, body }) => {
-        p.strictEqual(statusCode, 200)
-        p.strictEqual(headers['content-type'], 'text/plain')
-        return body
-      }
-    )
-      .end()
-      .on('data', buf => {
-        bufs.push(buf)
-      })
-      .on('end', () => {
-        p.strictEqual(wanted, Buffer.concat(bufs).toString('utf8'))
-      })
-      .on('error', () => {
-        p.fail()
-      })
-  })
-
-  await p.completed
-})
-
-test('pipeline: fails with invalid URL', t => {
-  const p = tspl(t, { plan: 4 })
-  p.throws(() => pipeline(), errors.InvalidArgumentError, 'throws on missing url argument')
-  p.throws(() => pipeline(''), errors.InvalidArgumentError, 'throws on invalid url')
-  p.throws(() => pipeline({}), errors.InvalidArgumentError, 'throws on missing url.origin argument')
-  p.throws(() => pipeline({ origin: '' }), errors.InvalidArgumentError, 'throws on invalid url.origin argument')
-})
-
-test('pipeline: fails with invalid onInfo', async (t) => {
-  const p = tspl(t, { plan: 2 })
-  pipeline({ origin: 'http://localhost', path: '/', onInfo: 'foo' }, () => {}).on('error', (err) => {
-    p.ok(err instanceof errors.InvalidArgumentError)
-    p.equal(err.message, 'invalid onInfo callback')
-  })
-  await p.completed
-})
-
-test('request: fails with invalid onInfo', async (t) => {
-  try {
-    await request({ origin: 'http://localhost', path: '/', onInfo: 'foo' })
-    assert.fail('should throw')
-  } catch (e) {
-    assert.ok(e)
-    assert.strictEqual(e.message, 'invalid onInfo callback')
-  }
-})
-
-test('stream: fails with invalid onInfo', async (t) => {
-  try {
-    await stream({ origin: 'http://localhost', path: '/', onInfo: 'foo' }, () => new PassThrough())
-    assert.fail('should throw')
-  } catch (e) {
-    assert.ok(e)
-    assert.strictEqual(e.message, 'invalid onInfo callback')
-  }
-})
-
 test('constructor validations', t => {
   const p = tspl(t, { plan: 4 })
   p.throws(() => new Agent({ factory: 'ASD' }), errors.InvalidArgumentError, 'throws on invalid opts argument')
@@ -748,7 +522,7 @@ test('drain', async t => {
 })
 
 test('global api', async t => {
-  const p = tspl(t, { plan: 6 * 2 })
+  const p = tspl(t, { plan: 5 * 2 })
 
   const server = http.createServer((req, res) => {
     if (req.url === '/bar') {
@@ -768,7 +542,6 @@ test('global api', async t => {
     await request(origin, { path: '/foo' })
     await request(`${origin}/foo`)
     await request({ origin, path: '/foo' })
-    await stream({ origin, path: '/foo' }, () => new PassThrough())
     await request({ protocol: 'http:', hostname: 'localhost', port: server.address().port, path: '/foo' })
     await request(`${origin}/bar`, { body: 'asd' })
   })

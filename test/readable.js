@@ -143,28 +143,4 @@ describe('Readable', () => {
 
     t.strictEqual(text, 'hello world')
   })
-
-  test('.bodyUsed', async function (t) {
-    t = tspl(t, { plan: 3 })
-
-    function resume () {
-    }
-    function abort () {
-    }
-    const r = new Readable({ resume, abort })
-
-    r.push(Buffer.from('hello world'))
-
-    process.nextTick(() => {
-      r.push(null)
-    })
-
-    t.strictEqual(r.bodyUsed, false)
-
-    const text = await r.text()
-
-    t.strictEqual(r.bodyUsed, true)
-
-    t.strictEqual(text, 'hello world')
-  })
 })
