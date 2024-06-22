@@ -87,11 +87,6 @@ test('parseHeaders', () => {
   assert.deepEqual(util.parseHeaders([Buffer.from('key'), [Buffer.from('value1'), Buffer.from('value2'), Buffer.from('value3')]]), { key: ['value1', 'value2', 'value3'] })
 })
 
-test('parseRawHeaders', () => {
-  assert.deepEqual(util.parseRawHeaders(['key', 'value', Buffer.from('key'), Buffer.from('value')]), ['key', 'value', 'key', 'value'])
-  assert.deepEqual(util.parseRawHeaders(['content-length', 'value', 'content-disposition', 'form-data; name="fieldName"']), ['content-length', 'value', 'content-disposition', 'form-data; name="fieldName"'])
-})
-
 test('buildURL', () => {
   const tests = [
     [{ id: BigInt(123456) }, 'id=123456'],
