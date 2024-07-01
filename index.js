@@ -80,3 +80,4 @@ module.exports.getGlobalDispatcher = getGlobalDispatcher
 module.exports.File = globalThis.File ?? require('node:buffer').File
 
 module.exports.request = makeDispatcher(api.request)
+module.exports.api = api
