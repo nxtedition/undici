@@ -5,10 +5,7 @@ const neo = require('neostandard')
 module.exports = [
   ...neo({
     ignores: [
-      'lib/llhttp',
-      'test/fixtures/wpt',
-      'test/fixtures/cache-tests',
-      'undici-fetch.js'
+      'lib/llhttp'
     ],
     noJsx: true,
     ts: true

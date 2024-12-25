@@ -41,25 +41,17 @@ test('assertRequestHandler', () => {
   assert.throws(() => util.assertRequestHandler({
     onConnect: () => {},
     onError: () => {},
-    onBodySent: null
-  }), InvalidArgumentError, 'invalid onBodySent method')
-  assert.throws(() => util.assertRequestHandler({
-    onConnect: () => {},
-    onError: () => {},
-    onBodySent: () => {},
     onHeaders: null
   }), InvalidArgumentError, 'invalid onHeaders method')
   assert.throws(() => util.assertRequestHandler({
     onConnect: () => {},
     onError: () => {},
-    onBodySent: () => {},
     onHeaders: () => {},
     onData: null
   }), InvalidArgumentError, 'invalid onData method')
   assert.throws(() => util.assertRequestHandler({
     onConnect: () => {},
     onError: () => {},
-    onBodySent: () => {},
     onHeaders: () => {},
     onData: () => {},
     onComplete: null
@@ -67,13 +59,11 @@ test('assertRequestHandler', () => {
   assert.throws(() => util.assertRequestHandler({
     onConnect: () => {},
     onError: () => {},
-    onBodySent: () => {},
     onUpgrade: 'null'
   }, 'CONNECT'), InvalidArgumentError, 'invalid onUpgrade method')
   assert.throws(() => util.assertRequestHandler({
     onConnect: () => {},
     onError: () => {},
-    onBodySent: () => {},
     onUpgrade: 'null'
   }, 'CONNECT', () => {}), InvalidArgumentError, 'invalid onUpgrade method')
 })

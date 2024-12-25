@@ -13,7 +13,6 @@ const {
   startRedirectingWithAuthorization,
   startRedirectingWithCookie,
   startRedirectingWithQueryParams,
-  startServer,
   startRedirectingWithRelativePath
 } = require('../utils/redirecting-servers')
 const { createReadable, createReadableStream } = require('../utils/stream')
@@ -699,37 +698,6 @@ test('removes cookie header on third party origin', async t => {
   const body = await bodyStream.text()
 
   t.strictEqual(body, '')
-
-  await t.completed
-})
-
-test('should upgrade the connection when no redirects are present', async t => {
-  t = tspl(t, { plan: 2 })
-
-  const server = await startServer((req, res) => {
-    if (req.url === '/') {
-      res.statusCode = 301
-      res.setHeader('Location', `http://${server}/end`)
-      res.end('REDIRECT')
-      return
-    }
-
-    res.statusCode = 101
-    res.setHeader('Connection', 'upgrade')
-    res.setHeader('Upgrade', req.headers.upgrade)
-    res.end('')
-  })
-
-  const { headers, socket } = await undici.upgrade(`http://${server}/`, {
-    method: 'GET',
-    protocol: 'foo/1',
-    dispatcher: new undici.Client(`http://${server}/`).compose(redirect({ maxRedirections: 10 }))
-  })
-
-  socket.end()
-
-  t.strictEqual(headers.connection, 'upgrade')
-  t.strictEqual(headers.upgrade, 'foo/1')
 
   await t.completed
 })

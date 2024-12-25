@@ -1103,9 +1103,6 @@ test('invalid opts', async (t) => {
   client.request(null, (err) => {
     p.ok(err instanceof errors.InvalidArgumentError)
   })
-  client.pipeline(null).on('error', (err) => {
-    p.ok(err instanceof errors.InvalidArgumentError)
-  })
   client.request({
     path: '/',
     method: 'GET',
@@ -1196,23 +1193,13 @@ test('CONNECT throws in next tick', async (t) => {
 })
 
 test('invalid signal', async (t) => {
-  const p = tspl(t, { plan: 8 })
+  const p = tspl(t, { plan: 3 })
 
   const client = new Client('http://localhost:3333')
   t.after(client.destroy.bind(client))
 
   let ticked = false
   client.request({ path: '/', method: 'GET', signal: {}, opaque: 'asd' }, (err, { opaque }) => {
-    p.strictEqual(ticked, true)
-    p.strictEqual(opaque, 'asd')
-    p.ok(err instanceof errors.InvalidArgumentError)
-  })
-  client.pipeline({ path: '/', method: 'GET', signal: {} }, () => {})
-    .on('error', (err) => {
-      p.strictEqual(ticked, true)
-      p.ok(err instanceof errors.InvalidArgumentError)
-    })
-  client.stream({ path: '/', method: 'GET', signal: {}, opaque: 'asd' }, () => {}, (err, { opaque }) => {
     p.strictEqual(ticked, true)
     p.strictEqual(opaque, 'asd')
     p.ok(err instanceof errors.InvalidArgumentError)

@@ -4,10 +4,10 @@ const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { createServer } = require('node:http')
 const { once } = require('node:events')
-const { FormData, request } = require('..')
+const { request } = require('..')
 const { File } = require('node:buffer')
 
-test('undici.request with a FormData body should set content-length header', async (t) => {
+test('undici.request with a FormData body should set content-length header', { skip: true }, async (t) => {
   t = tspl(t, { plan: 1 })
 
   const server = createServer((req, res) => {

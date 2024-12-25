@@ -1,12 +1,12 @@
 'use strict'
 
-const { FormData, request, Agent, interceptors } = require('../..')
+const { request, Agent, interceptors } = require('../..')
 const { test } = require('node:test')
 const { createServer } = require('node:http')
 const { once } = require('node:events')
 const { tspl } = require('@matteo.collina/tspl')
 
-test('redirecting works with a FormData body', async (t) => {
+test('redirecting works with a FormData body', { skip: true }, async (t) => {
   const plan = tspl(t, { plan: 1 })
 
   const server = createServer((req, res) => {

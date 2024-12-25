@@ -1,12 +1,9 @@
 'use strict'
 
 const { test } = require('node:test')
-const assert = require('node:assert/strict')
 const http = require('node:http')
 const https = require('node:https')
 const { Client, Pool, errors } = require('../..')
-const stream = require('node:stream')
-const { createSecureServer } = require('node:http2')
 const pem = require('https-pem')
 const { tspl } = require('@matteo.collina/tspl')
 const { closeServerAsPromise, closeClientAndServerAsPromise } = require('../utils/node-http')
@@ -645,183 +642,6 @@ test('dispatch pool onError missing', async (t) => {
   await p.completed
 })
 
-test('dispatch onBodySent not a function', async (t) => {
-  const p = tspl(t, { plan: 2 })
-  const server = http.createServer((req, res) => {
-    res.end('ad')
-  })
-  t.after(closeServerAsPromise(server))
-
-  server.listen(0, () => {
-    const client = new Pool(`http://localhost:${server.address().port}`)
-    t.after(() => { return client.close() })
-
-    client.dispatch({
-      path: '/',
-      method: 'GET'
-    }, {
-      onBodySent: '42',
-      onConnect () {},
-      onHeaders () {},
-      onData () {},
-      onError (err) {
-        p.strictEqual(err.code, 'UND_ERR_INVALID_ARG')
-        p.strictEqual(err.message, 'invalid onBodySent method')
-      }
-    })
-  })
-
-  await p.completed
-})
-
-test('dispatch onBodySent buffer', async (t) => {
-  const p = tspl(t, { plan: 3 })
-
-  const server = http.createServer((req, res) => {
-    res.end('ad')
-  })
-  t.after(closeServerAsPromise(server))
-
-  server.listen(0, () => {
-    const client = new Pool(`http://localhost:${server.address().port}`)
-    t.after(() => { return client.close() })
-    const body = 'hello 🚀'
-    client.dispatch({
-      path: '/',
-      method: 'POST',
-      body
-    }, {
-      onBodySent (chunk) {
-        p.strictEqual(chunk.toString(), body)
-      },
-      onRequestSent () {
-        p.ok(1)
-      },
-      onError (err) {
-        throw err
-      },
-      onConnect () {},
-      onHeaders () {},
-      onData () {},
-      onComplete () {
-        p.ok(1)
-      }
-    })
-  })
-
-  await p.completed
-})
-
-test('dispatch onBodySent stream', async (t) => {
-  const p = tspl(t, { plan: 8 })
-  const server = http.createServer((req, res) => {
-    res.end('ad')
-  })
-  t.after(closeServerAsPromise(server))
-  const chunks = ['he', 'llo', 'world', '🚀']
-  const toSendBytes = chunks.reduce((a, b) => a + Buffer.byteLength(b), 0)
-  const body = stream.Readable.from(chunks)
-  server.listen(0, () => {
-    const client = new Pool(`http://localhost:${server.address().port}`)
-    t.after(() => { return client.close() })
-    let sentBytes = 0
-    let currentChunk = 0
-    client.dispatch({
-      path: '/',
-      method: 'POST',
-      body
-    }, {
-      onBodySent (chunk) {
-        p.strictEqual(chunks[currentChunk++], chunk)
-        sentBytes += Buffer.byteLength(chunk)
-      },
-      onRequestSent () {
-        p.ok(1)
-      },
-      onError (err) {
-        throw err
-      },
-      onConnect () {},
-      onHeaders () {},
-      onData () {},
-      onComplete () {
-        p.strictEqual(currentChunk, chunks.length)
-        p.strictEqual(sentBytes, toSendBytes)
-        p.ok(1)
-      }
-    })
-  })
-
-  await p.completed
-})
-
-test('dispatch onBodySent async-iterable', (t, done) => {
-  const server = http.createServer((req, res) => {
-    res.end('ad')
-  })
-  t.after(closeServerAsPromise(server))
-  const chunks = ['he', 'llo', 'world', '🚀']
-  const toSendBytes = chunks.reduce((a, b) => a + Buffer.byteLength(b), 0)
-  server.listen(0, () => {
-    const client = new Pool(`http://localhost:${server.address().port}`)
-    t.after(() => { return client.close() })
-    let sentBytes = 0
-    let currentChunk = 0
-    client.dispatch({
-      path: '/',
-      method: 'POST',
-      body: chunks
-    }, {
-      onBodySent (chunk) {
-        assert.strictEqual(chunks[currentChunk++], chunk)
-        sentBytes += Buffer.byteLength(chunk)
-      },
-      onError (err) {
-        throw err
-      },
-      onConnect () {},
-      onHeaders () {},
-      onData () {},
-      onComplete () {
-        assert.strictEqual(currentChunk, chunks.length)
-        assert.strictEqual(sentBytes, toSendBytes)
-        done()
-      }
-    })
-  })
-})
-
-test('dispatch onBodySent throws error', (t, done) => {
-  const server = http.createServer((req, res) => {
-    res.end('ended')
-  })
-  t.after(closeServerAsPromise(server))
-
-  server.listen(0, () => {
-    const client = new Pool(`http://localhost:${server.address().port}`)
-    t.after(() => { return client.close() })
-    const body = 'hello'
-    client.dispatch({
-      path: '/',
-      method: 'POST',
-      body
-    }, {
-      onBodySent (chunk) {
-        throw new Error('fail')
-      },
-      onError (err) {
-        assert.ok(err instanceof Error)
-        assert.strictEqual(err.message, 'fail')
-        done()
-      },
-      onConnect () {},
-      onHeaders () {},
-      onData () {},
-      onComplete () {}
-    })
-  })
-})
-
 test('dispatches in expected order', async (t) => {
   const server = http.createServer((req, res) => {
     res.end('ended')
@@ -845,12 +665,6 @@ test('dispatches in expected order', async (t) => {
       onConnect () {
         dispatches.push('onConnect')
       },
-      onBodySent () {
-        dispatches.push('onBodySent')
-      },
-      onResponseStarted () {
-        dispatches.push('onResponseStarted')
-      },
       onHeaders () {
         dispatches.push('onHeaders')
       },
@@ -859,64 +673,7 @@ test('dispatches in expected order', async (t) => {
       },
       onComplete () {
         dispatches.push('onComplete')
-        p.deepStrictEqual(dispatches, ['onConnect', 'onBodySent', 'onResponseStarted', 'onHeaders', 'onData', 'onComplete'])
-      },
-      onError (err) {
-        p.ifError(err)
-      }
-    })
-  })
-
-  await p.completed
-})
-
-test('dispatches in expected order for http2', async (t) => {
-  const server = createSecureServer(pem)
-  server.on('stream', (stream) => {
-    stream.respond({
-      'content-type': 'text/plain; charset=utf-8',
-      ':status': 200
-    })
-    stream.end('ended')
-  })
-
-  const p = tspl(t, { plan: 1 })
-
-  server.listen(0, () => {
-    const client = new Pool(`https://localhost:${server.address().port}`, {
-      connect: {
-        rejectUnauthorized: false
-      },
-      allowH2: true
-    })
-
-    t.after(closeClientAndServerAsPromise(client, server))
-
-    const dispatches = []
-
-    client.dispatch({
-      path: '/',
-      method: 'POST',
-      body: 'body'
-    }, {
-      onConnect () {
-        dispatches.push('onConnect')
-      },
-      onBodySent () {
-        dispatches.push('onBodySent')
-      },
-      onResponseStarted () {
-        dispatches.push('onResponseStarted')
-      },
-      onHeaders () {
-        dispatches.push('onHeaders')
-      },
-      onData () {
-        dispatches.push('onData')
-      },
-      onComplete () {
-        dispatches.push('onComplete')
-        p.deepStrictEqual(dispatches, ['onConnect', 'onBodySent', 'onResponseStarted', 'onHeaders', 'onData', 'onComplete'])
+        p.deepStrictEqual(dispatches, ['onConnect', 'onHeaders', 'onData', 'onComplete'])
       },
       onError (err) {
         p.ifError(err)
@@ -960,12 +717,6 @@ test('Issue#3065 - fix bad destroy handling', async (t) => {
       onConnect () {
         dispatches.push('onConnect')
       },
-      onBodySent () {
-        dispatches.push('onBodySent')
-      },
-      onResponseStarted () {
-        dispatches.push('onResponseStarted')
-      },
       onHeaders () {
         dispatches.push('onHeaders')
       },
@@ -974,7 +725,7 @@ test('Issue#3065 - fix bad destroy handling', async (t) => {
       },
       onComplete () {
         dispatches.push('onComplete')
-        p.deepStrictEqual(dispatches, ['onConnect', 'onBodySent', 'onResponseStarted', 'onHeaders', 'onData', 'onComplete'])
+        p.deepStrictEqual(dispatches, ['onConnect', 'onHeaders', 'onData', 'onComplete'])
       },
       onError (err) {
         p.ifError(err)
@@ -989,12 +740,6 @@ test('Issue#3065 - fix bad destroy handling', async (t) => {
     }, {
       onConnect () {
         dispatches2.push('onConnect')
-      },
-      onBodySent () {
-        dispatches2.push('onBodySent')
-      },
-      onResponseStarted () {
-        dispatches2.push('onResponseStarted')
       },
       onHeaders () {
         dispatches2.push('onHeaders')
@@ -1004,101 +749,7 @@ test('Issue#3065 - fix bad destroy handling', async (t) => {
       },
       onComplete () {
         dispatches2.push('onComplete')
-        p.deepStrictEqual(dispatches2, ['onConnect', 'onBodySent', 'onResponseStarted', 'onHeaders', 'onData', 'onComplete'])
-      },
-      onError (err) {
-        p.ifError(err)
-      }
-    })
-  })
-
-  await p.completed
-})
-
-test('Issue#3065 - fix bad destroy handling (h2)', async (t) => {
-  // Due to we handle the session, the request for h2 will fail on servername change
-  const p = tspl(t, { plan: 4 })
-  const server = createSecureServer(pem)
-  server.on('stream', (stream) => {
-    stream.respond({
-      'content-type': 'text/plain; charset=utf-8',
-      ':status': 200
-    })
-    stream.end('ended')
-  })
-
-  server.listen(0, () => {
-    const client = new Client(`https://localhost:${server.address().port}`, {
-      connect: {
-        rejectUnauthorized: false
-      },
-      allowH2: true
-    })
-
-    t.after(closeClientAndServerAsPromise(client, server))
-
-    const dispatches = []
-    const dispatches2 = []
-
-    client.once('disconnect', (...args) => {
-      const [,, err] = args
-      p.strictEqual(err.code, 'UND_ERR_INFO')
-      p.strictEqual(err.message, 'servername changed')
-    })
-
-    client.dispatch({
-      path: '/',
-      method: 'POST',
-      body: 'body'
-    }, {
-      onConnect () {
-        dispatches.push('onConnect')
-      },
-      onBodySent () {
-        dispatches.push('onBodySent')
-      },
-      onResponseStarted () {
-        dispatches.push('onResponseStarted')
-      },
-      onHeaders () {
-        dispatches.push('onHeaders1')
-      },
-      onData () {
-        dispatches.push('onData')
-      },
-      onComplete () {
-        dispatches.push('onComplete')
-        p.deepStrictEqual(dispatches, ['onConnect', 'onBodySent', 'onResponseStarted', 'onHeaders1', 'onData', 'onComplete'])
-      },
-      onError (err) {
-        p.ifError(err)
-      }
-    })
-
-    client.dispatch({
-      servername: 'google.com',
-      path: '/',
-      method: 'POST',
-      body: 'body'
-    }, {
-      onConnect () {
-        dispatches2.push('onConnect')
-      },
-      onBodySent () {
-        dispatches2.push('onBodySent')
-      },
-      onResponseStarted () {
-        dispatches2.push('onResponseStarted')
-      },
-      onHeaders () {
-        dispatches2.push('onHeaders2')
-      },
-      onData () {
-        dispatches2.push('onData')
-      },
-      onComplete () {
-        dispatches2.push('onComplete')
-        p.deepStrictEqual(dispatches2, ['onConnect', 'onBodySent', 'onResponseStarted', 'onHeaders2', 'onData', 'onComplete'])
+        p.deepStrictEqual(dispatches2, ['onConnect', 'onHeaders', 'onData', 'onComplete'])
       },
       onError (err) {
         p.ifError(err)

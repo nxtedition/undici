@@ -13,7 +13,6 @@ const {
   startRedirectingWithQueryParams
 } = require('./utils/redirecting-servers')
 const { createReadable, createReadableStream } = require('./utils/stream')
-const { Headers: UndiciHeaders } = require('..')
 const redirect = undici.interceptors.redirect
 
 for (const factory of [
@@ -263,7 +262,7 @@ for (const factory of [
 
     const { statusCode, headers, body: bodyStream } = await request(t, server, undefined, `http://${server}/303`, {
       method: 'PATCH',
-      headers: new UndiciHeaders({
+      headers: new Headers({
         'Content-Encoding': 'gzip',
         'X-Foo1': '1',
         'X-Foo2': '2',

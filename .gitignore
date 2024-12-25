@@ -77,7 +77,6 @@ crash-*
 fuzz-results-*.json
 
 # Bundle output
-undici-fetch.js
 /test/imports/undici-import.js
 
 # .npmrc has platform specific value for windows

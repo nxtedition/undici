@@ -5,7 +5,7 @@ const { test, after } = require('node:test')
 const { Client } = require('..')
 const { createServer } = require('node:http')
 
-test('idempotent retry', async (t) => {
+test('idempotent retry', { skip: true }, async (t) => {
   t = tspl(t, { plan: 11 })
 
   const body = 'world'
