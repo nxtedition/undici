@@ -8,6 +8,7 @@ const errors = require('./lib/core/errors')
 const util = require('./lib/core/util')
 const { InvalidArgumentError } = errors
 const api = require('./lib/api')
+const Readable = require('./lib/api/readable')
 const buildConnector = require('./lib/core/connect')
 const { getGlobalDispatcher, setGlobalDispatcher } = require('./lib/global')
 
@@ -17,6 +18,7 @@ module.exports.Dispatcher = Dispatcher
 module.exports.Client = Client
 module.exports.Pool = Pool
 module.exports.Agent = Agent
+module.exports.Readable = Readable
 
 module.exports.buildConnector = buildConnector
 module.exports.errors = errors
