@@ -18,22 +18,6 @@ module.exports.Client = Client
 module.exports.Pool = Pool
 module.exports.Agent = Agent
 
-module.exports.interceptors = {
-  redirect: require('./lib/interceptor/redirect'),
-  responseError: require('./lib/interceptor/response-error'),
-  retry: require('./lib/interceptor/retry'),
-  dump: require('./lib/interceptor/dump'),
-  dns: require('./lib/interceptor/dns'),
-  cache: require('./lib/interceptor/cache')
-}
-
-module.exports.cacheStores = {
-  MemoryCacheStore: require('./lib/cache/memory-cache-store')
-}
-
-const SqliteCacheStore = require('./lib/cache/sqlite-cache-store')
-module.exports.cacheStores.SqliteCacheStore = SqliteCacheStore
-
 module.exports.buildConnector = buildConnector
 module.exports.errors = errors
 module.exports.util = {
