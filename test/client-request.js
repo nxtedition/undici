@@ -11,7 +11,7 @@ const { kConnect } = require('../lib/core/symbols')
 const { Readable } = require('node:stream')
 const net = require('node:net')
 const { promisify } = require('node:util')
-const { NotSupportedError, InvalidArgumentError } = require('../lib/core/errors')
+const { InvalidArgumentError } = require('../lib/core/errors')
 const { parseFormDataString } = require('./utils/formdata')
 
 test('request dump head', async (t) => {
@@ -778,35 +778,6 @@ test('request post body no extra data handler', async (t) => {
     })
     await body.text()
     t.ok(true, 'pass')
-  })
-
-  await t.completed
-})
-
-test('request formData', async (t) => {
-  t = tspl(t, { plan: 1 })
-
-  const obj = { asd: true }
-  const server = createServer((req, res) => {
-    res.end(JSON.stringify(obj))
-  })
-  after(() => server.close())
-
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
-
-    const { body } = await client.request({
-      path: '/',
-      method: 'GET'
-    })
-
-    try {
-      await body.formData()
-      t.fail('should throw NotSupportedError')
-    } catch (error) {
-      t.ok(error instanceof NotSupportedError)
-    }
   })
 
   await t.completed
