@@ -123,13 +123,13 @@ test('basic dispatch get', async (t) => {
       },
       onHeaders (statusCode, headers) {
         p.strictEqual(statusCode, 200)
-        p.strictEqual(Array.isArray(headers), true)
+        p.strictEqual(headers && typeof headers === 'object', true)
       },
       onData (buf) {
         bufs.push(buf)
       },
       onComplete (trailers) {
-        p.deepStrictEqual(trailers, [])
+        p.deepStrictEqual(trailers, {})
         p.strictEqual('hello', Buffer.concat(bufs).toString('utf8'))
       },
       onError () {
@@ -177,21 +177,15 @@ test('trailers dispatch get', async (t) => {
       },
       onHeaders (statusCode, headers) {
         p.strictEqual(statusCode, 200)
-        p.strictEqual(Array.isArray(headers), true)
-        {
-          const contentTypeIdx = headers.findIndex(x => x.toString() === 'Content-Type')
-          p.strictEqual(headers[contentTypeIdx + 1].toString(), 'text/plain')
-        }
+        p.strictEqual(headers && typeof headers === 'object', true)
+        p.strictEqual(headers['content-type'], 'text/plain')
       },
       onData (buf) {
         bufs.push(buf)
       },
       onComplete (trailers) {
-        p.strictEqual(Array.isArray(trailers), true)
-        {
-          const contentMD5Idx = trailers.findIndex(x => x.toString() === 'Content-MD5')
-          p.strictEqual(trailers[contentMD5Idx + 1].toString(), 'test')
-        }
+        p.strictEqual(trailers && typeof trailers === 'object', true)
+        p.strictEqual(trailers['content-md5'], 'test')
         p.strictEqual('hello', Buffer.concat(bufs).toString('utf8'))
       },
       onError () {
