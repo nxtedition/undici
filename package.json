@@ -1,6 +1,6 @@
 {
   "name": "@nxtedition/undici",
-  "version": "9.0.2",
+  "version": "9.0.3",
   "description": "An HTTP/1.1 client, written from scratch for Node.js",
   "homepage": "https://undici.nodejs.org",
   "bugs": {
