@@ -2,7 +2,7 @@
 
 const { strictEqual, throws, doesNotThrow } = require('node:assert')
 const { test, describe } = require('node:test')
-const { isBlobLike, parseURL, isHttpOrHttpsPrefixed, isValidPort } = require('../lib/core/util')
+const { isBlobLike, parseURL, isValidPort } = require('../lib/core/util')
 const { Blob, File } = require('node:buffer')
 const { InvalidArgumentError } = require('../lib/core/errors')
 
@@ -64,16 +64,6 @@ describe('isBlobLike', () => {
 
   test('null', () => {
     strictEqual(isBlobLike(null), false)
-  })
-})
-
-describe('isHttpOrHttpsPrefixed', () => {
-  test('returns false for invalid values', () => {
-    strictEqual(isHttpOrHttpsPrefixed('wss:'), false)
-  })
-  test('returns true for "http:" or "https:"', () => {
-    strictEqual(isHttpOrHttpsPrefixed('http:'), true)
-    strictEqual(isHttpOrHttpsPrefixed('https:'), true)
   })
 })
 

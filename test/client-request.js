@@ -681,34 +681,6 @@ test('request bytes', async (t) => {
   await t.completed
 })
 
-test('request body', async (t) => {
-  t = tspl(t, { plan: 1 })
-
-  const obj = { asd: true }
-  const server = createServer((req, res) => {
-    res.end(JSON.stringify(obj))
-  })
-  after(() => server.close())
-
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
-
-    const { body } = await client.request({
-      path: '/',
-      method: 'GET'
-    })
-
-    let x = ''
-    for await (const chunk of body.body) {
-      x += Buffer.from(chunk)
-    }
-    t.strictEqual(JSON.stringify(obj), x)
-  })
-
-  await t.completed
-})
-
 test('request post body no missing data', async (t) => {
   t = tspl(t, { plan: 2 })
 
