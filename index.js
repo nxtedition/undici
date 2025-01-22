@@ -28,7 +28,8 @@ module.exports.buildConnector = buildConnector
 module.exports.errors = errors
 module.exports.util = {
   parseHeaders: util.parseHeaders,
-  headerNameToString: util.headerNameToString
+  headerNameToString: util.headerNameToString,
+  cache: require('./lib/util/cache')
 }
 
 function makeDispatcher (fn) {
