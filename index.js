@@ -20,10 +20,6 @@ module.exports.Pool = Pool
 module.exports.Agent = Agent
 module.exports.Readable = Readable
 
-module.exports.cacheStores = {
-  SqliteCacheStore: require('./lib/cache/sqlite-cache-store')
-}
-
 module.exports.buildConnector = buildConnector
 module.exports.errors = errors
 module.exports.util = {
