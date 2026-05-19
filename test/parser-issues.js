@@ -5,6 +5,47 @@ const { test, after } = require('node:test')
 const net = require('node:net')
 const { Client, errors } = require('..')
 
+const truncatedChunkedResponse = Buffer.from(
+  'HTTP/1.1 200 OK\r\n' +
+  'Transfer-Encoding: chunked\r\n' +
+  'Connection: close\r\n' +
+  '\r\n' +
+  '3\r\n' +
+  'hel\r\n'
+)
+
+test('truncated chunked responses terminated by EOF error the response body', async (t) => {
+  t = tspl(t, { plan: 3 })
+
+  const server = net.createServer((socket) => {
+    socket.end(truncatedChunkedResponse)
+  })
+  after(() => server.close())
+
+  await new Promise(resolve => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.destroy())
+
+  client.request({
+    method: 'GET',
+    path: '/'
+  }, (err, { body } = {}) => {
+    t.ifError(err)
+    body
+      .on('end', () => {
+        t.fail('expected the truncated chunked body to fail')
+      })
+      .on('error', (err) => {
+        t.strictEqual(err.name, 'HTTPParserError')
+        t.strictEqual(err.message, 'Response does not match the HTTP/1.1 protocol (Invalid EOF state)')
+      })
+      .resume()
+  })
+
+  await t.completed
+})
+
 test('https://github.com/mcollina/undici/issues/268', async (t) => {
   t = tspl(t, { plan: 2 })
 
