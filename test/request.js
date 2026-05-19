@@ -371,6 +371,51 @@ describe('Should include headers from iterable objects', scope => {
     })
   })
 
+  test('Should include headers from plain objects with polluted Object.prototype[Symbol.iterator]', async t => {
+    t = tspl(t, { plan: 3 })
+
+    const server = createServer({ joinDuplicateHeaders: true }, (req, res) => {
+      t.strictEqual('GET', req.method)
+      t.strictEqual(`localhost:${server.address().port}`, req.headers.host)
+      t.strictEqual(req.headers.hello, 'world')
+      res.statusCode = 200
+      res.end('hello')
+    })
+
+    const headers = {
+      hello: 'world'
+    }
+
+    const originalIterator = Object.prototype[Symbol.iterator]
+    // eslint-disable-next-line no-extend-native
+    Object.prototype[Symbol.iterator] = function * () {}
+
+    try {
+      await new Promise((resolve, reject) => {
+        server.listen(0, (err) => {
+          if (err != null) reject(err)
+          else resolve()
+        })
+      })
+
+      await request({
+        method: 'GET',
+        origin: `http://localhost:${server.address().port}`,
+        reset: true,
+        headers
+      })
+    } finally {
+      if (originalIterator === undefined) {
+        delete Object.prototype[Symbol.iterator]
+      } else {
+        // eslint-disable-next-line no-extend-native
+        Object.prototype[Symbol.iterator] = originalIterator
+      }
+      server.closeAllConnections?.()
+      server.close()
+    }
+  })
+
   test('Should throw error if headers iterable object does not yield key-value pairs', async t => {
     t = tspl(t, { plan: 2 })
 
@@ -401,6 +446,103 @@ describe('Should include headers from iterable objects', scope => {
     }).catch((err) => {
       t.ok(err instanceof errors.InvalidArgumentError)
       t.strictEqual(err.message, 'headers must be in key-value pair format')
+    })
+  })
+})
+
+describe('connection header per RFC 7230', () => {
+  test('should allow close', async (t) => {
+    t = tspl(t, { plan: 1 })
+
+    const server = createServer((req, res) => {
+      res.end('ok')
+    })
+
+    after(() => server.close())
+    await new Promise((resolve) => server.listen(0, resolve))
+
+    const { statusCode, body } = await request({
+      method: 'GET',
+      origin: `http://localhost:${server.address().port}`,
+      headers: { connection: 'close' }
+    })
+    await body.dump()
+    t.strictEqual(statusCode, 200)
+  })
+
+  test('should allow keep-alive', async (t) => {
+    t = tspl(t, { plan: 1 })
+
+    const server = createServer((req, res) => {
+      res.end('ok')
+    })
+
+    after(() => server.close())
+    await new Promise((resolve) => server.listen(0, resolve))
+
+    const { statusCode, body } = await request({
+      method: 'GET',
+      origin: `http://localhost:${server.address().port}`,
+      headers: { connection: 'keep-alive' }
+    })
+    await body.dump()
+    t.strictEqual(statusCode, 200)
+  })
+
+  test('should allow custom header name as connection option', async (t) => {
+    t = tspl(t, { plan: 1 })
+
+    const server = createServer((req, res) => {
+      res.end('ok')
+    })
+
+    after(() => server.close())
+    await new Promise((resolve) => server.listen(0, resolve))
+
+    const { statusCode, body } = await request({
+      method: 'GET',
+      origin: `http://localhost:${server.address().port}`,
+      headers: {
+        'x-custom-header': 'value',
+        connection: 'x-custom-header'
+      }
+    })
+    await body.dump()
+    t.strictEqual(statusCode, 200)
+  })
+
+  test('should allow comma-separated list of connection options', async (t) => {
+    t = tspl(t, { plan: 1 })
+
+    const server = createServer((req, res) => {
+      res.end('ok')
+    })
+
+    after(() => server.close())
+    await new Promise((resolve) => server.listen(0, resolve))
+
+    const { statusCode, body } = await request({
+      method: 'GET',
+      origin: `http://localhost:${server.address().port}`,
+      headers: {
+        'x-custom-header': 'value',
+        connection: 'close, x-custom-header'
+      }
+    })
+    await body.dump()
+    t.strictEqual(statusCode, 200)
+  })
+
+  test('should reject invalid tokens in connection header', async (t) => {
+    t = tspl(t, { plan: 2 })
+
+    await request({
+      method: 'GET',
+      origin: 'http://localhost:1234',
+      headers: { connection: 'invalid header with spaces' }
+    }).catch((err) => {
+      t.ok(err instanceof errors.InvalidArgumentError)
+      t.strictEqual(err.message, 'invalid connection header')
     })
   })
 })
