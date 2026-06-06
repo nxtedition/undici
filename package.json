@@ -78,6 +78,7 @@
   "devDependencies": {
     "@fastify/busboy": "^3.1.1",
     "@matteo.collina/tspl": "^0.1.1",
+    "@metcoder95/https-pem": "^1.0.0",
     "@sinonjs/fake-timers": "^12.0.0",
     "@types/node": "^18.19.50",
     "abort-controller": "^3.0.0",
@@ -85,7 +86,6 @@
     "dns-packet": "^5.4.0",
     "eslint": "^9.9.0",
     "fast-check": "^3.17.1",
-    "https-pem": "^3.0.0",
     "husky": "^9.0.7",
     "neostandard": "^0.12.0",
     "proxy": "^2.1.1",
