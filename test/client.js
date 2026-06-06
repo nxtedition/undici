@@ -1305,6 +1305,58 @@ test('socket end errors on truncated chunked response paused by backpressure', a
   await t.completed
 })
 
+// Same as pausedAtFin, but the peer sends a TCP RST (ECONNRESET) instead of a
+// clean FIN — the Mac OS case the onHttpSocketError ECONNRESET branch handles.
+// On RST the socket is already destroyed when finish() runs, so feeding an
+// empty buffer through the resumed parser must NOT be allowed to swallow the
+// truncated-body state: the failure must still surface as a
+// ResponseContentLengthMismatchError, identically to the clean-FIN path.
+function pausedAtReset (t, writeResponse, onBody) {
+  const payload = Buffer.alloc(64 * 1024, 0x61)
+
+  const server = createNetServer((socket) => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      writeResponse(socket, payload)
+      // Give the bytes time to reach the client and pause its parser before
+      // resetting; an immediate RST could discard the still-unread body.
+      setTimeout(() => socket.resetAndDestroy(), 50)
+    })
+  })
+  after(() => server.close())
+
+  server.listen(0, '127.0.0.1', () => {
+    const client = new Client(`http://127.0.0.1:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({ path: '/', method: 'GET' }, (err, data) => {
+      t.ifError(err)
+
+      const chunks = []
+      data.body.on('end', () => onBody(t, payload, Buffer.concat(chunks), null))
+      data.body.on('error', (err) => onBody(t, payload, Buffer.concat(chunks), err))
+
+      // Defer consuming until after the reset has been handled while paused.
+      setTimeout(() => data.body.on('data', (chunk) => chunks.push(chunk)), 100)
+    })
+  })
+}
+
+test('connection reset errors on truncated Content-Length response paused by backpressure', async (t) => {
+  t = tspl(t, { plan: 3 })
+  pausedAtReset(t, (socket, payload) => {
+    // Declare twice the body we actually send, then RST -> truncated.
+    socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${payload.length * 2}\r\nConnection: close\r\n\r\n`)
+    socket.write(payload)
+  }, (t, payload, body, err) => {
+    t.ok(err instanceof Error, `expected an error, got ${err}`)
+    // The truncation must be classified as a content-length mismatch, not a
+    // generic socket error.
+    t.strictEqual(err.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
+  })
+  await t.completed
+})
+
 test('only one streaming req at a time', async (t) => {
   t = tspl(t, { plan: 7 })
 
