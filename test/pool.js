@@ -69,6 +69,56 @@ test('does not throw when connect is a function', async (t) => {
   t.doesNotThrow(() => new Pool('http://localhost', { connect: () => {} }))
 })
 
+test('throws when allowH2 is enabled (HTTP/1.1 only build)', async (t) => {
+  t = tspl(t, { plan: 3 })
+
+  try {
+    new Pool('http://localhost', { allowH2: true }) // eslint-disable-line no-new
+  } catch (e) {
+    t.ok(e instanceof errors.InvalidArgumentError)
+    t.strictEqual(e.message, 'unsupported allowH2, this build only supports HTTP/1.1')
+  }
+
+  // allowH2: false / undefined must NOT throw (it is the default HTTP/1.1 behavior).
+  t.doesNotThrow(() => new Pool('http://localhost', { allowH2: false }).destroy())
+})
+
+test('close() settles when destroy() is called while a request is queued', async (t) => {
+  t = tspl(t, { plan: 1 })
+
+  // Never responds: the first request stays in flight (the single client is
+  // busy) so the second request is buffered in the pool's own queue.
+  const server = createServer(() => {})
+  after(() => server.close())
+
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const pool = new Pool(`http://localhost:${server.address().port}`, {
+    connections: 1,
+    pipelining: 1
+  })
+
+  pool.request({ path: '/', method: 'GET' }).catch(() => {})
+  pool.request({ path: '/', method: 'GET' }).catch(() => {})
+
+  // Let the second request land in the pool's internal queue.
+  await new Promise((resolve) => setTimeout(resolve, 100))
+
+  const closed = pool.close()
+  // Destroying the pool while a request is still queued must not strand the
+  // parked close() promise — it used to hang forever because only kOnDrain
+  // (a client 'drain' event, which destroyed clients never emit) resolved it.
+  pool.destroy(new Error('boom'))
+
+  const outcome = await Promise.race([
+    closed.then(() => 'resolved', (err) => `rejected:${err && err.message}`),
+    new Promise((resolve) => setTimeout(() => resolve('hang'), 5000))
+  ])
+  t.strictEqual(outcome, 'resolved')
+
+  await t.completed
+})
+
 test('connect/disconnect event(s)', async (t) => {
   const clients = 2
 

@@ -507,6 +507,25 @@ test('invalid options throws', (t, done) => {
   }
 
   try {
+    new Client(new URL('http://localhost:200'), { allowH2: true }) // eslint-disable-line
+    assert.ok(0)
+  } catch (err) {
+    assert.ok(err instanceof errors.InvalidArgumentError)
+    assert.strictEqual(err.message, 'unsupported allowH2, this build only supports HTTP/1.1')
+  }
+
+  try {
+    new Client(new URL('http://localhost:200'), { maxConcurrentStreams: 10 }) // eslint-disable-line
+    assert.ok(0)
+  } catch (err) {
+    assert.ok(err instanceof errors.InvalidArgumentError)
+    assert.strictEqual(err.message, 'unsupported maxConcurrentStreams, this build only supports HTTP/1.1')
+  }
+
+  // allowH2: false / undefined must NOT throw (it is the default HTTP/1.1 behavior).
+  new Client(new URL('http://localhost:200'), { allowH2: false }).destroy()
+
+  try {
     new Client(new URL('http://localhost:200'), { connectTimeout: -1 }) // eslint-disable-line
     assert.ok(0)
   } catch (err) {
