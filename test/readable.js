@@ -2,6 +2,7 @@
 
 const { tspl } = require('@matteo.collina/tspl')
 const { test, describe } = require('node:test')
+const { once } = require('node:events')
 const Readable = require('../lib/api/readable')
 
 describe('Readable', () => {
@@ -205,5 +206,30 @@ describe('Readable', () => {
     t.strictEqual(r.bodyUsed, true)
 
     t.strictEqual(text, 'hello world')
+  })
+
+  // Regression: consumeStart() is called as a plain function (not a method),
+  // so `this` is undefined in strict mode. For a body that had already emitted
+  // 'end' but was never disturbed (an empty body resume()'d to completion),
+  // the endEmitted branch used to dereference `this[kConsume]` and throw an
+  // uncaught TypeError instead of resolving the consume.
+  test('consume on an already-ended, undisturbed empty body resolves', async function (t) {
+    t = tspl(t, { plan: 1 })
+
+    function resume () {
+    }
+    function abort () {
+    }
+    const r = new Readable({ resume, abort })
+
+    r.push(null)
+    r.resume()
+    await once(r, 'end')
+
+    // endEmitted is now true while the stream is not disturbed, so consume()
+    // reaches consumeStart() with endEmitted already set.
+    const text = await r.text()
+
+    t.strictEqual(text, '')
   })
 })
