@@ -22,7 +22,7 @@ afterEach(() => {
 })
 
 function installNumericTimerHandles () {
-  let nextId = 0
+  let nextId = -1
   const handles = new Map()
 
   globalThis.setTimeout = (callback, delay, ...args) => {
@@ -53,7 +53,7 @@ test('fast timers support timer handles without refresh or unref', () => {
 })
 
 test('the H1 parser supports timer handles without unref', async () => {
-  installNumericTimerHandles()
+  const handles = installNumericTimerHandles()
 
   const socket = new net.Socket()
   const client = {
@@ -65,8 +65,10 @@ test('the H1 parser supports timer handles without unref', async () => {
 
   try {
     socket[kParser].setTimeout(10, 0)
+    assert.strictEqual(socket[kParser].timeout, 0)
   } finally {
     socket[kParser].destroy()
+    assert.strictEqual(handles.size, 0)
     socket.removeAllListeners()
     socket.destroy()
   }
@@ -86,6 +88,7 @@ test('the H1 parser refreshes numeric timer handles by replacing them', async ()
   try {
     socket[kParser].setTimeout(10, 0)
     const first = socket[kParser].timeout
+    assert.strictEqual(first, 0)
 
     socket[kParser].setTimeout(10, 0)
     const second = socket[kParser].timeout
