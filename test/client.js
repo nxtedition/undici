@@ -961,7 +961,7 @@ test('basic POST with transfer encoding: chunked', async (t) => {
   await t.completed
 })
 
-test('basic POST with empty stream', async (t) => {
+test('POST with an already-ended empty stream completes and destroys the body', { timeout: 10000 }, async (t) => {
   t = tspl(t, { plan: 4 })
 
   const server = createServer(function (req, res) {
@@ -986,6 +986,8 @@ test('basic POST with empty stream', async (t) => {
         t.strictEqual(body.destroyed, true)
       })
     })
+    // EOF is signalled, but 'end' is not emitted until the stream is consumed.
+    // The zero-length write fast path must still drive that lifecycle.
     body.push(null)
     client.request({
       path: '/',
