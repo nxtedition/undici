@@ -180,7 +180,8 @@ describe('A pool should be able to reuse TLS sessions between clients', () => {
   })
 })
 
-test('a connector enforces maxCachedSessions across hostnames', async (t) => {
+test('a connector enforces maxCachedSessions across hostnames', async (testContext) => {
+  const t = tspl(testContext, { plan: 4 })
   const tlsOptions = {
     ...options,
     minVersion: 'TLSv1.2',
@@ -197,7 +198,7 @@ test('a connector enforces maxCachedSessions across hostnames', async (t) => {
   serverA.listen(0)
   serverB.listen(0)
   await Promise.all([once(serverA, 'listening'), once(serverB, 'listening')])
-  t.after(() => Promise.all([
+  testContext.after(() => Promise.all([
     new Promise((resolve) => serverA.close(resolve)),
     new Promise((resolve) => serverB.close(resolve))
   ]))
@@ -241,8 +242,9 @@ test('a connector enforces maxCachedSessions across hostnames', async (t) => {
   const portA = serverA.address().port
   const portB = serverB.address().port
 
-  t.assert.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), false)
-  t.assert.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), true)
-  t.assert.strictEqual(await connectOnce({ hostname: 'b.test', port: portB }), false)
-  t.assert.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), false)
+  t.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), false)
+  t.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), true)
+  t.strictEqual(await connectOnce({ hostname: 'b.test', port: portB }), false)
+  t.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), false)
+  await t.completed
 })
