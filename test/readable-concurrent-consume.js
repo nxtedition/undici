@@ -10,7 +10,11 @@ test('only the first body mixin call in a turn consumes the body', async () => {
     abort () {}
   })
 
+  assert.strictEqual(body.bodyUsed, false)
+
   const first = body.text()
+  assert.strictEqual(body.bodyUsed, true)
+
   const second = body.text()
 
   queueMicrotask(() => {
@@ -27,4 +31,5 @@ test('only the first body mixin call in a turn consumes the body', async () => {
   assert.strictEqual(secondResult.status, 'rejected')
   assert(secondResult.reason instanceof TypeError)
   assert.strictEqual(secondResult.reason.message, 'unusable')
+  assert.strictEqual(body.bodyUsed, true)
 })
