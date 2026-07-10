@@ -1,5 +1,6 @@
 'use strict'
 
+const assert = require('node:assert')
 const { tspl } = require('@matteo.collina/tspl')
 const { readFileSync, createReadStream } = require('node:fs')
 const { createServer } = require('node:http')
@@ -19,6 +20,28 @@ const hasIPv6 = (() => {
     (name) => re.test(name) && iFaces[name].some(({ family }) => family === 6)
   )
 })()
+
+test('passes socketPath to a custom connect function', async (t) => {
+  const connectError = new Error('custom connect error')
+  const socketPath = '/var/run/test.sock'
+  let receivedSocketPath
+
+  const client = new Client('http://localhost', {
+    socketPath,
+    connect (opts, callback) {
+      receivedSocketPath = opts.socketPath
+      callback(connectError, null)
+    }
+  })
+  t.after(() => client.close())
+
+  const err = await new Promise((resolve) => {
+    client.request({ path: '/', method: 'GET' }, resolve)
+  })
+
+  assert.strictEqual(err, connectError)
+  assert.strictEqual(receivedSocketPath, socketPath)
+})
 
 test('basic get', async (t) => {
   t = tspl(t, { plan: 24 })

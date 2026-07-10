@@ -1,5 +1,6 @@
 'use strict'
 
+const assert = require('node:assert')
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { EventEmitter } = require('node:events')
@@ -67,6 +68,28 @@ test('does not throw when connect is a function', async (t) => {
   t = tspl(t, { plan: 1 })
 
   t.doesNotThrow(() => new Pool('http://localhost', { connect: () => {} }))
+})
+
+test('passes socketPath to a custom connect function', async (t) => {
+  const connectError = new Error('custom connect error')
+  const socketPath = '/var/run/test.sock'
+  let receivedSocketPath
+
+  const pool = new Pool('http://localhost', {
+    socketPath,
+    connect (opts, callback) {
+      receivedSocketPath = opts.socketPath
+      callback(connectError, null)
+    }
+  })
+  t.after(() => pool.close())
+
+  const err = await new Promise((resolve) => {
+    pool.request({ path: '/', method: 'GET' }, resolve)
+  })
+
+  assert.strictEqual(err, connectError)
+  assert.strictEqual(receivedSocketPath, socketPath)
 })
 
 test('throws when allowH2 is enabled (HTTP/1.1 only build)', async (t) => {
