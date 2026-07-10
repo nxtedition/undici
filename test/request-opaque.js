@@ -14,13 +14,30 @@ test('request preserves falsy opaque values', async (t) => {
   t.after(() => client.destroy())
 
   for (const opaque of [false, 0, '']) {
-    const response = await client.request({
+    const promiseResponse = await client.request({
       path: '/',
       method: 'GET',
       opaque
     })
 
-    assert.strictEqual(response.opaque, opaque)
-    await response.body.dump()
+    assert.strictEqual(promiseResponse.opaque, opaque)
+    await promiseResponse.body.dump()
+
+    const callbackResponse = await new Promise((resolve, reject) => {
+      client.request({
+        path: '/',
+        method: 'GET',
+        opaque
+      }, (err, response) => {
+        if (err) {
+          reject(err)
+        } else {
+          resolve(response)
+        }
+      })
+    })
+
+    assert.strictEqual(callbackResponse.opaque, opaque)
+    await callbackResponse.body.dump()
   }
 })
