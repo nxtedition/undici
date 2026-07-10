@@ -30,3 +30,15 @@ test('dump rejects a pre-aborted third-party AbortSignal', async () => {
     name: 'AbortError'
   })
 })
+
+test('dump preserves a pre-aborted third-party AbortSignal reason', async () => {
+  const controller = new AbortController()
+  const reason = new Error('abort reason')
+  controller.abort()
+  Object.defineProperty(controller.signal, 'reason', { value: reason })
+
+  await assert.rejects(
+    createBody().dump({ signal: controller.signal }),
+    err => err === reason
+  )
+})
