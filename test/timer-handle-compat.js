@@ -1,5 +1,6 @@
 'use strict'
 
+const assert = require('node:assert/strict')
 const net = require('node:net')
 const { afterEach, test } = require('node:test')
 
@@ -35,6 +36,8 @@ function installNumericTimerHandles () {
     handles.delete(id)
     return originalClearTimeout(handle ?? id)
   }
+
+  return handles
 }
 
 test('fast timers support timer handles without refresh or unref', () => {
@@ -62,6 +65,34 @@ test('the H1 parser supports timer handles without unref', async () => {
 
   try {
     socket[kParser].setTimeout(10, 0)
+  } finally {
+    socket[kParser].destroy()
+    socket.removeAllListeners()
+    socket.destroy()
+  }
+})
+
+test('the H1 parser refreshes numeric timer handles by replacing them', async () => {
+  const handles = installNumericTimerHandles()
+
+  const socket = new net.Socket()
+  const client = {
+    [kMaxHeadersSize]: 16_384,
+    [kMaxResponseSize]: -1
+  }
+
+  await connectH1(client, socket)
+
+  try {
+    socket[kParser].setTimeout(10, 0)
+    const first = socket[kParser].timeout
+
+    socket[kParser].setTimeout(10, 0)
+    const second = socket[kParser].timeout
+
+    assert.notStrictEqual(second, first)
+    assert.strictEqual(handles.has(first), false)
+    assert.strictEqual(handles.has(second), true)
   } finally {
     socket[kParser].destroy()
     socket.removeAllListeners()
