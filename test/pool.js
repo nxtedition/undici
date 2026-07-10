@@ -70,6 +70,19 @@ test('does not throw when connect is a function', async (t) => {
   t.doesNotThrow(() => new Pool('http://localhost', { connect: () => {} }))
 })
 
+test('rejects a non-string socketPath with built-in and custom connectors', () => {
+  for (const connect of [undefined, () => {}]) {
+    assert.throws(
+      () => new Pool('http://localhost', { socketPath: 123, connect }),
+      {
+        name: 'InvalidArgumentError',
+        code: 'UND_ERR_INVALID_ARG',
+        message: 'invalid socketPath'
+      }
+    )
+  }
+})
+
 test('passes socketPath to a custom connect function', async (t) => {
   const connectError = new Error('custom connect error')
   const socketPath = '/var/run/test.sock'
