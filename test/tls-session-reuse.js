@@ -4,9 +4,10 @@ const { tspl } = require('@matteo.collina/tspl')
 const { test, after, describe } = require('node:test')
 const { readFileSync } = require('node:fs')
 const { join } = require('node:path')
+const { once } = require('node:events')
 const https = require('node:https')
 const crypto = require('node:crypto')
-const { Client, Pool } = require('..')
+const { Client, Pool, buildConnector } = require('..')
 const { kSocket } = require('../lib/core/symbols')
 
 const options = {
@@ -177,4 +178,71 @@ describe('A pool should be able to reuse TLS sessions between clients', () => {
 
     await t.completed
   })
+})
+
+test('a connector enforces maxCachedSessions across hostnames', async (t) => {
+  const tlsOptions = {
+    ...options,
+    minVersion: 'TLSv1.2',
+    maxVersion: 'TLSv1.2'
+  }
+
+  const serverA = https.createServer(tlsOptions, (req, res) => {
+    res.end('a')
+  })
+  const serverB = https.createServer(tlsOptions, (req, res) => {
+    res.end('b')
+  })
+
+  serverA.listen(0)
+  serverB.listen(0)
+  await Promise.all([once(serverA, 'listening'), once(serverB, 'listening')])
+  t.after(() => Promise.all([
+    new Promise((resolve) => serverA.close(resolve)),
+    new Promise((resolve) => serverB.close(resolve))
+  ]))
+
+  const connector = buildConnector({
+    ca,
+    lookup (hostname, options, callback) {
+      if (options?.all) {
+        callback(null, [{ address: '127.0.0.1', family: 4 }])
+      } else {
+        callback(null, '127.0.0.1', 4)
+      }
+    },
+    maxCachedSessions: 1,
+    minVersion: 'TLSv1.2',
+    maxVersion: 'TLSv1.2',
+    rejectUnauthorized: false
+  })
+  const retainedSessions = []
+
+  function connectOnce ({ hostname, port }) {
+    return new Promise((resolve, reject) => {
+      const socket = connector({ hostname, protocol: 'https:', port }, (err, socket) => {
+        if (err) {
+          reject(err)
+          return
+        }
+
+        const reused = socket.isSessionReused()
+        socket.on('error', reject)
+        socket.on('end', () => resolve(reused))
+        socket.resume()
+        socket.write(`GET / HTTP/1.1\r\nHost: ${hostname}\r\nConnection: close\r\n\r\n`)
+      })
+      // SessionCache intentionally stores weak references. Retain the emitted
+      // sessions so this test observes cache eviction rather than GC timing.
+      socket.on('session', (session) => retainedSessions.push(session))
+    })
+  }
+
+  const portA = serverA.address().port
+  const portB = serverB.address().port
+
+  t.assert.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), false)
+  t.assert.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), true)
+  t.assert.strictEqual(await connectOnce({ hostname: 'b.test', port: portB }), false)
+  t.assert.strictEqual(await connectOnce({ hostname: 'a.test', port: portA }), false)
 })
