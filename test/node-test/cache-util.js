@@ -35,10 +35,10 @@ test('makeCacheKey ignores an iterator polluted onto Object.prototype', t => {
     method: 'GET',
     path: '/resource'
   }
-  const authenticatedHeaders = {
+  const authenticatedHeaders = Object.assign(Object.create({}), {
     authorization: 'Bearer secret',
     'x-tenant': 'customer-a'
-  }
+  })
 
   const authenticatedKey = util.cache.makeCacheKey({
     ...options,
@@ -53,12 +53,14 @@ test('makeCacheKey ignores an iterator polluted onto Object.prototype', t => {
   assert.notDeepEqual(authenticatedKey, anonymousKey)
 })
 
-test('makeCacheKey still accepts genuine iterable header maps', () => {
+test('makeCacheKey still accepts inherited Map iterators', () => {
+  class HeaderMap extends Map {}
+
   const key = util.cache.makeCacheKey({
     origin: 'https://example.test',
     method: 'GET',
     path: '/resource',
-    headers: new Map([
+    headers: new HeaderMap([
       ['authorization', 'Bearer secret'],
       ['x-tenant', 'customer-a']
     ])
