@@ -195,8 +195,8 @@ test('a connector enforces maxCachedSessions across hostnames', async (testConte
     res.end('b')
   })
 
-  serverA.listen(0)
-  serverB.listen(0)
+  serverA.listen(0, '127.0.0.1')
+  serverB.listen(0, '127.0.0.1')
   await Promise.all([once(serverA, 'listening'), once(serverB, 'listening')])
   testContext.after(() => Promise.all([
     new Promise((resolve) => serverA.close(resolve)),
