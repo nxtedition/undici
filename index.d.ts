@@ -96,7 +96,19 @@ export namespace Dispatcher {
     typeOfService?: number | null
     /** Protocol name for an upgrade request. */
     upgrade?: string | null
+    /**
+     * The time, in milliseconds, allowed to receive complete response headers.
+     * Use `0` to disable it. HTTP/1.1 parser timeouts use lower-overhead fast
+     * timers with a target resolution around 500 ms, so they are not guaranteed
+     * to fire with exact millisecond precision.
+     */
     headersTimeout?: number | null
+    /**
+     * The time, in milliseconds, allowed between response body chunks. Use `0`
+     * to disable it. HTTP/1.1 parser timeouts use lower-overhead fast timers
+     * with a target resolution around 500 ms, so they are not guaranteed to
+     * fire with exact millisecond precision.
+     */
     bodyTimeout?: number | null
     reset?: boolean | null
     expectContinue?: boolean | null
@@ -158,8 +170,20 @@ export class Client extends Dispatcher {
 export namespace Client {
   interface Options {
     maxHeaderSize?: number
+    /**
+     * The time, in milliseconds, allowed to receive complete response headers.
+     * Use `0` to disable it. Defaults to 300 seconds. HTTP/1.1 parser timeouts
+     * use lower-overhead fast timers with a target resolution around 500 ms, so
+     * they are not guaranteed to fire with exact millisecond precision.
+     */
     headersTimeout?: number
     connectTimeout?: number
+    /**
+     * The time, in milliseconds, allowed between response body chunks. Use `0`
+     * to disable it. Defaults to 300 seconds. HTTP/1.1 parser timeouts use
+     * lower-overhead fast timers with a target resolution around 500 ms, so they
+     * are not guaranteed to fire with exact millisecond precision.
+     */
     bodyTimeout?: number
     keepAliveTimeout?: number
     keepAliveMaxTimeout?: number
