@@ -1,6 +1,7 @@
 *
 !lib/**/*
 !index.js
+!index.d.ts
 
 # The wasm files are stored as base64 strings in the corresponding .js files
 lib/llhttp/llhttp_simd.wasm
