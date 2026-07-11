@@ -61,6 +61,27 @@ describe('Readable', () => {
     })
   })
 
+  test('generic destroy keeps falsy errors on the normal Readable path', async function (t) {
+    t = tspl(t, { plan: 4 })
+
+    let aborts = 0
+    const r = new Readable({
+      resume () {},
+      abort () { aborts++ }
+    })
+    const errorEvent = once(r, 'error')
+    const closeEvent = new Promise(resolve => r.once('close', resolve))
+
+    r.destroy(false)
+
+    const [err] = await errorEvent
+    await closeEvent
+    t.ok(err instanceof Error)
+    t.strictEqual(err.code, 'UND_ERR_ABORTED')
+    t.strictEqual(aborts, 1)
+    t.strictEqual(await r.text().catch(err => err), err)
+  })
+
   test('.arrayBuffer()', async function (t) {
     t = tspl(t, { plan: 1 })
 
