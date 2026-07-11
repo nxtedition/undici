@@ -114,3 +114,49 @@ test('blob-like body without stream() and mismatched size rejects gracefully', a
   t.strictEqual(statusCode, 200)
   await body.dump()
 })
+
+test('blob-like stream() errors reject gracefully without wedging the client', async (t) => {
+  t = tspl(t, { plan: 4 })
+
+  const server = createServer((req, res) => {
+    res.end('ok')
+  })
+  let connections = 0
+  server.on('connection', () => { connections++ })
+  after(() => server.close())
+
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.close())
+
+  const streamError = new Error('blob stream failed')
+  const blobLike = {
+    [Symbol.toStringTag]: 'Blob',
+    size: 1,
+    stream () {
+      throw streamError
+    }
+  }
+
+  try {
+    await withTimeout(
+      client.request({ path: '/', method: 'POST', body: blobLike }),
+      10000,
+      'blob-like request neither resolved nor rejected'
+    )
+    t.fail('request should reject')
+  } catch (err) {
+    t.strictEqual(err, streamError)
+  }
+
+  const { statusCode, body } = await withTimeout(
+    client.request({ path: '/', method: 'GET' }),
+    10000,
+    'client wedged after blob-like stream() error'
+  )
+  t.strictEqual(statusCode, 200)
+  t.strictEqual(await body.text(), 'ok')
+  t.strictEqual(connections, 1, 'the healthy connection remains reusable')
+})
