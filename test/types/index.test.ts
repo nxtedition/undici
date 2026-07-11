@@ -180,24 +180,6 @@ async function types () {
   const parsed = util.parseHeaders([Buffer.from('x-test'), Buffer.from('yes')], { existing: 'value' })
   parsed.existing satisfies string
 
-  const cacheKey = util.cache.makeCacheKey({
-    origin: new URL('http://localhost'),
-    method: 'GET',
-    path: '/',
-    headers: [['accept', 'application/json']]
-  })
-  util.cache.assertCacheKey(cacheKey)
-
-  const cacheValue: unknown = {
-    statusCode: 200,
-    statusMessage: 'OK',
-    cachedAt: 1,
-    staleAt: 2,
-    deleteAt: 3
-  }
-  util.cache.assertCacheValue(cacheValue)
-  cacheValue.statusCode satisfies number
-
   const body = new Readable({
     resume () {},
     abort (reason) {

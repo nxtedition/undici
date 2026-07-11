@@ -465,44 +465,6 @@ export namespace util {
     headers: readonly (Buffer | string | readonly (Buffer | string)[])[],
     object: T
   ): T
-
-  namespace cache {
-    type Headers = Record<string, string | string[]> | Iterable<readonly [string, string]> | null
-
-    interface KeyInput {
-      origin: string | URL
-      method: string
-      path: string
-      headers?: Headers
-    }
-
-    interface Key {
-      origin: string
-      method: string
-      path: string
-      headers?: Record<string, string | string[]>
-    }
-
-    interface MadeKey extends Key {
-      headers: Record<string, string | string[]>
-    }
-
-    interface Value {
-      statusCode: number
-      statusMessage: string
-      cachedAt: number
-      staleAt: number
-      deleteAt: number
-      headers?: object | null
-      vary?: object
-      etag?: string
-      [key: string]: unknown
-    }
-
-    function makeCacheKey (options: KeyInput): MadeKey
-    function assertCacheKey (key: unknown): asserts key is Key
-    function assertCacheValue (value: unknown): asserts value is Value
-  }
 }
 
 export interface TopLevelRequestOptions<TOpaque = null>
