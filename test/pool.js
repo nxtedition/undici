@@ -1,7 +1,9 @@
 'use strict'
 
 const assert = require('node:assert')
+const { execFile } = require('node:child_process')
 const net = require('node:net')
+const { join } = require('node:path')
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { EventEmitter } = require('node:events')
@@ -21,6 +23,8 @@ const {
   Pool,
   errors
 } = require('..')
+
+const execFileAsync = promisify(execFile)
 
 function withTimeout (promise, message) {
   let timer
@@ -628,6 +632,16 @@ test('pool dispatch', async (t) => {
   })
 
   await t.completed
+})
+
+test('pool promptly dispatches queued requests after idle socket validation', async () => {
+  // Isolate the event loop so test-runner activity cannot wake an unref'ed
+  // idle-validation Immediate and hide the stall.
+  await execFileAsync(process.execPath, [
+    join(__dirname, 'fixtures', 'pool-idle-socket-validation.js')
+  ], {
+    timeout: 2000
+  })
 })
 
 test('300 requests succeed', async (t) => {
