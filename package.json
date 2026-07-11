@@ -2,13 +2,13 @@
   "name": "@nxtedition/undici",
   "version": "11.1.9",
   "description": "An HTTP/1.1 client, written from scratch for Node.js",
-  "homepage": "https://undici.nodejs.org",
+  "homepage": "https://github.com/nxtedition/undici",
   "bugs": {
-    "url": "https://github.com/nodejs/undici/issues"
+    "url": "https://github.com/nxtedition/undici/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nodejs/undici.git"
+    "url": "git+https://github.com/nxtedition/undici.git"
   },
   "license": "MIT",
   "contributors": [
