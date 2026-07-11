@@ -1283,6 +1283,7 @@ test('an absolute url as path', async (t) => {
 
 test('multiple destroy callback', async (t) => {
   t = tspl(t, { plan: 4 })
+  const destroyErr = new Error('destroyed')
 
   const server = createServer((req, res) => {
     res.end()
@@ -1302,9 +1303,9 @@ test('multiple destroy callback', async (t) => {
       data.body
         .resume()
         .on('error', (err) => {
-          t.ok(err instanceof Error)
+          t.strictEqual(err, destroyErr)
         })
-      client.destroy(new Error(), (err) => {
+      client.destroy(destroyErr, (err) => {
         t.ifError(err)
       })
       client.destroy(new Error(), (err) => {
