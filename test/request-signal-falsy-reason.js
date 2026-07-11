@@ -3,9 +3,12 @@
 const assert = require('node:assert/strict')
 const { once } = require('node:events')
 const { createServer } = require('node:http')
+const { finished } = require('node:stream/promises')
 const { test } = require('node:test')
 const { Client } = require('..')
 
+// The request callback API reserves null/undefined for success. These are the
+// falsy values that can unambiguously travel through its error position.
 const reasons = [false, 0, 0n, '', NaN]
 
 async function createTestClient (t, handler) {
@@ -24,6 +27,13 @@ async function capture (promise) {
     value => ({ status: 'fulfilled', value }),
     reason => ({ status: 'rejected', reason })
   )
+}
+
+function assertAbortCarrier (err, reason) {
+  assert(err instanceof Error)
+  assert.strictEqual(err.name, 'AbortError')
+  assert.strictEqual(err.code, 'UND_ERR_ABORTED')
+  assert(Object.is(err.cause, reason))
 }
 
 test('a pre-aborted request Promise preserves falsy reasons', async (t) => {
@@ -117,5 +127,122 @@ test('an in-flight request callback preserves falsy abort reasons', async (t) =>
     const { err, data } = await result
     assert(Object.is(err, reason))
     assert.deepStrictEqual(data, { opaque: null })
+  }
+})
+
+test('a late body mixin preserves post-header falsy abort reasons', async (t) => {
+  const { client } = await createTestClient(t, (req, res) => {
+    res.writeHead(200)
+    res.write('partial body')
+  })
+
+  for (const reason of reasons) {
+    const controller = new AbortController()
+    const { body } = await client.request({
+      path: '/',
+      method: 'GET',
+      signal: controller.signal
+    })
+    const errorEvent = once(body, 'error')
+    const closeEvent = new Promise(resolve => body.once('close', resolve))
+
+    controller.abort(reason)
+
+    const [emittedError] = await errorEvent
+    await closeEvent
+    const result = await capture(body.text())
+    assertAbortCarrier(emittedError, reason)
+    assert.strictEqual(result.status, 'rejected')
+    assert(Object.is(result.reason, reason))
+    assert.strictEqual(body.errored, emittedError)
+  }
+})
+
+test('a pending body mixin preserves post-header falsy abort reasons', async (t) => {
+  const { client } = await createTestClient(t, (req, res) => {
+    res.writeHead(200)
+    res.write('partial body')
+  })
+
+  for (const reason of reasons) {
+    const controller = new AbortController()
+    let callbackCalls = 0
+    const { body } = await new Promise((resolve, reject) => {
+      client.request({
+        path: '/',
+        method: 'GET',
+        signal: controller.signal
+      }, (err, data) => {
+        callbackCalls++
+        if (err != null) {
+          reject(err)
+        } else {
+          resolve(data)
+        }
+      })
+    })
+    const errorEvent = once(body, 'error')
+    const consumption = capture(body.text())
+
+    controller.abort(reason)
+
+    const [emittedError] = await errorEvent
+    const result = await consumption
+    assertAbortCarrier(emittedError, reason)
+    assert.strictEqual(result.status, 'rejected')
+    assert(Object.is(result.reason, reason))
+    assert.strictEqual(callbackCalls, 1)
+  }
+})
+
+test('post-header falsy abort reasons reject async iteration with an Error carrier', async (t) => {
+  const { client } = await createTestClient(t, (req, res) => {
+    res.writeHead(200)
+    res.write('partial body')
+  })
+
+  for (const reason of reasons) {
+    const controller = new AbortController()
+    const { body } = await client.request({
+      path: '/',
+      method: 'GET',
+      signal: controller.signal
+    })
+    const consumption = capture((async () => {
+      for await (const chunk of body) {
+        assert(chunk.length > 0)
+      }
+    })())
+
+    controller.abort(reason)
+
+    const result = await consumption
+    assert.strictEqual(result.status, 'rejected')
+    assertAbortCarrier(result.reason, reason)
+    assert.strictEqual(body.errored, result.reason)
+  }
+})
+
+test('post-header falsy abort reasons reject stream.finished with an Error carrier', async (t) => {
+  const { client } = await createTestClient(t, (req, res) => {
+    res.writeHead(200)
+    res.write('partial body')
+  })
+
+  for (const reason of reasons) {
+    const controller = new AbortController()
+    const { body } = await client.request({
+      path: '/',
+      method: 'GET',
+      signal: controller.signal
+    })
+    const completion = capture(finished(body))
+
+    controller.abort(reason)
+
+    const result = await completion
+    assert.strictEqual(result.status, 'rejected')
+    assertAbortCarrier(result.reason, reason)
+    assert.strictEqual(body.errored, result.reason)
   }
 })
