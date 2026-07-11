@@ -2,8 +2,8 @@
 
 const assert = require('node:assert/strict')
 const { test } = require('node:test')
-const { AbortController } = require('abort-controller')
 const Readable = require('../lib/api/readable')
+const { AbortController } = globalThis
 
 function createBody () {
   return new Readable({
@@ -12,7 +12,7 @@ function createBody () {
   })
 }
 
-test('dump supports third-party AbortSignals without throwIfAborted', async () => {
+test('dump supports native AbortSignals', async () => {
   const controller = new AbortController()
   const body = createBody()
   const dumped = body.dump({ signal: controller.signal })
@@ -22,7 +22,7 @@ test('dump supports third-party AbortSignals without throwIfAborted', async () =
   assert.strictEqual(await dumped, null)
 })
 
-test('dump rejects a pre-aborted third-party AbortSignal', async () => {
+test('dump rejects a pre-aborted native AbortSignal', async () => {
   const controller = new AbortController()
   controller.abort()
 
@@ -31,11 +31,10 @@ test('dump rejects a pre-aborted third-party AbortSignal', async () => {
   })
 })
 
-test('dump preserves a pre-aborted third-party AbortSignal reason', async () => {
+test('dump preserves a pre-aborted native AbortSignal reason', async () => {
   const controller = new AbortController()
   const reason = new Error('abort reason')
-  controller.abort()
-  Object.defineProperty(controller.signal, 'reason', { value: reason })
+  controller.abort(reason)
 
   await assert.rejects(
     createBody().dump({ signal: controller.signal }),
@@ -43,10 +42,9 @@ test('dump preserves a pre-aborted third-party AbortSignal reason', async () => 
   )
 })
 
-test('dump preserves a null pre-aborted third-party AbortSignal reason', async () => {
+test('dump preserves a null pre-aborted native AbortSignal reason', async () => {
   const controller = new AbortController()
-  controller.abort()
-  Object.defineProperty(controller.signal, 'reason', { value: null })
+  controller.abort(null)
 
   await assert.rejects(
     createBody().dump({ signal: controller.signal }),
@@ -54,17 +52,16 @@ test('dump preserves a null pre-aborted third-party AbortSignal reason', async (
   )
 })
 
-test('dump preserves a null in-flight third-party AbortSignal reason', async () => {
+test('dump preserves a null in-flight native AbortSignal reason', async () => {
   const controller = new AbortController()
-  Object.defineProperty(controller.signal, 'reason', { value: null })
   const dumped = createBody().dump({ signal: controller.signal })
-  controller.abort()
+  controller.abort(null)
 
   await assert.rejects(dumped, err => err === null)
 })
 
 test('dump abort cannot be blocked by stopImmediatePropagation', async () => {
-  const controller = new globalThis.AbortController()
+  const controller = new AbortController()
   const reason = new Error('abort reason')
   const body = createBody()
 
