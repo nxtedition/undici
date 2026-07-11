@@ -872,7 +872,7 @@ test('pool destroy fails queued requests', async (t) => {
 // connectionError (which leaves the pool backed up) and dispatching again,
 // which adds a replacement client and triggers the kAddClient drain path.
 test('pool emits drain after a dropped client is replaced while backed up', async (t) => {
-  t = tspl(t, { plan: 4 })
+  t = tspl(t, { plan: 7 })
 
   const seen = []
   let total = 0
@@ -925,21 +925,91 @@ test('pool emits drain after a dropped client is replaced while backed up', asyn
   const c0 = seen[0].client
   c0.emit('connectionError', new URL('http://notahost'), [c0], new Error('boom'))
 
-  // Allow new clients to accept work and watch for the pool 'drain'.
-  writeMore = true
+  // Watch for the pool 'drain', including its dispatcher target chain.
   let drained = false
-  pool.on('drain', () => { drained = true })
+  let drainedTargets
+  pool.on('drain', (origin, targets) => {
+    drained = true
+    drainedTargets = targets
+  })
 
   // Creates a replacement client and calls kAddClient while pool[kNeedDrain] is
-  // still true -> schedules the kOnDrain microtask that flushes the queue.
-  pool.dispatch({}, noopHandler) // -> c1
+  // still true -> schedules the kOnDrain microtask. The replacement itself
+  // applies backpressure, so that microtask must not dispatch queued work yet.
+  pool.dispatch({}, noopHandler) // -> c1 (busy: dispatch returns false)
 
-  // Flush the drain microtask, then the macrotask phase.
+  // Flush the synthetic drain microtask. It must respect the replacement
+  // client's backpressure instead of dispatching the queued request early.
+  await new Promise((resolve) => setImmediate(resolve))
+  t.strictEqual(seen.length, 2, 'the queued request waits for the replacement client to drain')
+  t.strictEqual(drained, false, 'the pool stays backed up while the replacement client is busy')
+
+  // Once the replacement really drains, queued work is flushed and the pool
+  // re-emits the same [pool, client] target shape as a normal client drain.
+  const c1 = seen[1].client
+  writeMore = true
+  c1.emit('drain', new URL('http://notahost'), [c1])
   await new Promise((resolve) => setImmediate(resolve))
 
   t.strictEqual(drained, true, 'pool emits drain after flushing its queue via the replacement client')
   t.strictEqual(seen.length, 3, 'the queued request was dispatched')
   t.strictEqual(seen[2].id, 1, 'the queued request ran on the replacement client')
+  t.deepStrictEqual(drainedTargets, [pool, c1], 'the pool drain target chain contains each dispatcher once')
 
   await t.completed
+})
+
+test('pool does not drain queued work through a destroyed replacement client', async (t) => {
+  let acceptWork = false
+  let nextId = 0
+  const seen = []
+
+  class FakeClient extends EventEmitter {
+    constructor () {
+      super()
+      this.id = nextId++
+      this.destroyed = false
+    }
+
+    dispatch () {
+      assert.strictEqual(this.destroyed, false, 'destroyed client must not receive queued work')
+      seen.push(this)
+      return acceptWork
+    }
+
+    close (callback) {
+      callback?.(null, null)
+      return Promise.resolve()
+    }
+
+    destroy () {
+      this.destroyed = true
+      return Promise.resolve()
+    }
+  }
+
+  const pool = new Pool('http://notahost', {
+    connections: 1,
+    factory: () => new FakeClient()
+  })
+  t.after(() => pool.destroy())
+
+  const handler = { onError () {} }
+  pool.dispatch({}, handler)
+  pool.dispatch({}, handler)
+
+  const first = seen[0]
+  first.emit('connectionError', new URL('http://notahost'), [first], new Error('boom'))
+
+  acceptWork = true
+  pool.dispatch({}, handler)
+  const replacement = seen[1]
+  replacement.destroyed = true
+
+  let drained = false
+  pool.on('drain', () => { drained = true })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.strictEqual(seen.length, 2)
+  assert.strictEqual(drained, false)
 })
