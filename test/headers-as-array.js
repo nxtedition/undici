@@ -1,5 +1,6 @@
 'use strict'
 
+const assert = require('node:assert/strict')
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { Client, errors } = require('..')
@@ -178,6 +179,74 @@ test('read invalid array-valued header elements once', async (t) => {
   t.strictEqual(reads, 1)
 
   await t.completed
+})
+
+test('reject coerced header injection before connecting', async (t) => {
+  let connections = 0
+  const client = new Client('http://localhost', {
+    connect (opts, callback) {
+      connections++
+      callback(new Error('unexpected connection'))
+    }
+  })
+  t.after(() => client.destroy())
+
+  let scalarReads = 0
+  const scalarValue = function () {}
+  scalarValue.toString = () => {
+    scalarReads++
+    return 'safe\r\nx-injected-scalar: true'
+  }
+
+  let arrayReads = 0
+  const arrayValue = function () {}
+  arrayValue.toString = () => {
+    arrayReads++
+    return 'safe\r\nx-injected-array: true'
+  }
+
+  let keyReads = 0
+  const mutableKey = {
+    toString () {
+      keyReads++
+      return keyReads === 1
+        ? 'name'
+        : 'name\r\nx-injected-key: true'
+    },
+    toLowerCase () {
+      return 'name'
+    }
+  }
+
+  await assert.rejects(
+    client.request({
+      path: '/',
+      method: 'GET',
+      headers: { name: scalarValue }
+    }),
+    new errors.InvalidArgumentError('invalid name header')
+  )
+  await assert.rejects(
+    client.request({
+      path: '/',
+      method: 'GET',
+      headers: { name: [arrayValue] }
+    }),
+    new errors.InvalidArgumentError('invalid name header')
+  )
+  await assert.rejects(
+    client.request({
+      path: '/',
+      method: 'GET',
+      headers: [mutableKey, 'safe']
+    }),
+    new errors.InvalidArgumentError('invalid header key')
+  )
+
+  assert.strictEqual(scalarReads, 1)
+  assert.strictEqual(arrayReads, 1)
+  assert.strictEqual(keyReads, 0)
+  assert.strictEqual(connections, 0)
 })
 
 test('fail if headers array is odd', async (t) => {
