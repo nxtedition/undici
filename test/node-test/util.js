@@ -20,6 +20,80 @@ test('isStream', () => {
   assert.ok(util.isStream(ee) === false)
 })
 
+test('addAbortListener cannot be blocked by stopImmediatePropagation', () => {
+  const controller = new AbortController()
+  let calls = 0
+
+  controller.signal.addEventListener('abort', (event) => {
+    event.stopImmediatePropagation()
+  })
+
+  const abortListener = util.addAbortListener(controller.signal, () => {
+    calls++
+  })
+
+  controller.abort()
+  assert.equal(calls, 1)
+  abortListener[Symbol.dispose]()
+})
+
+test('addAbortListener disposes native AbortSignal listeners', () => {
+  const controller = new AbortController()
+  let calls = 0
+  const abortListener = util.addAbortListener(controller.signal, () => {
+    calls++
+  })
+
+  abortListener[Symbol.dispose]()
+  abortListener[Symbol.dispose]()
+  controller.abort()
+
+  assert.equal(calls, 0)
+})
+
+test('addAbortListener falls back for third-party AbortSignals', () => {
+  const target = new EventTarget()
+  let removals = 0
+  let calls = 0
+  const signal = {
+    aborted: false,
+    addEventListener (type, listener, options) {
+      if (Object.getOwnPropertySymbols(options).length !== 0) {
+        throw new TypeError('private listener options are unsupported')
+      }
+      target.addEventListener(type, listener, options)
+    },
+    removeEventListener (type, listener) {
+      removals++
+      target.removeEventListener(type, listener)
+    }
+  }
+
+  const abortListener = util.addAbortListener(signal, () => {
+    calls++
+  })
+
+  target.dispatchEvent(new Event('abort'))
+  abortListener[Symbol.dispose]()
+
+  assert.equal(calls, 1)
+  assert.equal(removals, 1)
+})
+
+test('addAbortListener preserves EventEmitter support and cleanup', () => {
+  const signal = new EventEmitter()
+  let calls = 0
+  const abortListener = util.addAbortListener(signal, () => {
+    calls++
+  })
+
+  assert.equal(signal.listenerCount('abort'), 1)
+  abortListener[Symbol.dispose]()
+  assert.equal(signal.listenerCount('abort'), 0)
+  signal.emit('abort')
+  assert.equal(calls, 0)
+})
+
 test('getServerName', () => {
   assert.equal(util.getServerName('1.1.1.1'), '')
   assert.equal(util.getServerName('1.1.1.1:443'), '')
