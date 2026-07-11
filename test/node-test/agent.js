@@ -391,7 +391,7 @@ test('fails with invalid args', t => {
   assert.throws(() => request({ origin: '' }), errors.InvalidArgumentError, 'throws on invalid url.origin argument')
   assert.throws(() => request('https://example.com', { path: 0 }), errors.InvalidArgumentError, 'throws on opts.path argument')
   assert.throws(() => request('https://example.com/original', { path: '/replacement' }), errors.InvalidArgumentError, 'opts.path requires an origin-only URL')
-  assert.throws(() => request('https://example.com', { agent: new Agent() }), errors.InvalidArgumentError, 'throws on opts.path argument')
+  assert.throws(() => request('https://example.com', { agent: new Agent() }), errors.InvalidArgumentError, 'throws on opts.agent argument')
   assert.throws(() => request('https://example.com', 'asd'), errors.InvalidArgumentError, 'throws on non object opts argument')
 })
 
