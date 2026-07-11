@@ -9,7 +9,7 @@ const { kRunning } = require('../lib/core/symbols')
 
 async function setup (t) {
   const server = createServer()
-  await once(server.listen(0), 'listening')
+  await new Promise((resolve) => server.listen(0, resolve))
 
   const client = new Client(`http://localhost:${server.address().port}`, {
     pipelining: 2
