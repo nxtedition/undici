@@ -208,6 +208,24 @@ describe('Readable', () => {
     t.strictEqual(text, 'hello world')
   })
 
+  test('.bodyUsed reflects Node Readable consumption', async function (t) {
+    t = tspl(t, { plan: 3 })
+
+    const r = new Readable({
+      resume () {},
+      abort () {}
+    })
+
+    r.push(Buffer.from('hello world'))
+    r.push(null)
+
+    t.strictEqual(r.bodyUsed, false)
+    t.strictEqual(r.read().toString(), 'hello world')
+    t.strictEqual(r.bodyUsed, true)
+
+    await t.completed
+  })
+
   // Regression: for a body that has already emitted 'end' but was never
   // disturbed, consumeEnd() completes synchronously and consumeFinish() nulls
   // consume.stream. consumeStart() must return immediately instead of falling
