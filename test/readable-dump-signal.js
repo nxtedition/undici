@@ -62,3 +62,42 @@ test('dump preserves a null in-flight third-party AbortSignal reason', async () 
 
   await assert.rejects(dumped, err => err === null)
 })
+
+test('dump abort cannot be blocked by stopImmediatePropagation', async () => {
+  const controller = new globalThis.AbortController()
+  const reason = new Error('abort reason')
+  const body = createBody()
+
+  controller.signal.addEventListener('abort', (event) => {
+    event.stopImmediatePropagation()
+  })
+
+  const dumped = body.dump({ signal: controller.signal })
+  controller.abort(reason)
+  setImmediate(() => body.push(null))
+
+  await assert.rejects(dumped, err => err === reason)
+})
+
+test('dump disposes structural AbortSignal listener on close', async () => {
+  const target = new EventTarget()
+  let removals = 0
+  const signal = {
+    aborted: false,
+    reason: undefined,
+    addEventListener (...args) {
+      target.addEventListener(...args)
+    },
+    removeEventListener (...args) {
+      removals++
+      target.removeEventListener(...args)
+    }
+  }
+  const body = createBody()
+  const dumped = body.dump({ signal })
+
+  queueMicrotask(() => body.push(null))
+
+  assert.strictEqual(await dumped, null)
+  assert.strictEqual(removals, 1)
+})
