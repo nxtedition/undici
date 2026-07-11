@@ -42,7 +42,7 @@ describe('isBlobLike', () => {
     strictEqual(isBlobLike(fileLikeStream), false)
   })
 
-  test('fileLikeArrayBuffer', () => {
+  test('blobLikeArrayBuffer', () => {
     const blobLikeArrayBuffer = {
       [Symbol.toStringTag]: 'Blob',
       arrayBuffer: () => { }
@@ -50,7 +50,7 @@ describe('isBlobLike', () => {
     strictEqual(isBlobLike(blobLikeArrayBuffer), false)
   })
 
-  test('blobLikeArrayBuffer', () => {
+  test('fileLikeArrayBuffer', () => {
     const fileLikeArrayBuffer = {
       [Symbol.toStringTag]: 'File',
       arrayBuffer: () => { }
