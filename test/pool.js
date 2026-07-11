@@ -22,6 +22,15 @@ const {
   errors
 } = require('..')
 
+function withTimeout (promise, message) {
+  let timer
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), 10000)
+    timer.unref()
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
 test('throws when connection is infinite', async (t) => {
   t = tspl(t, { plan: 2 })
 
@@ -489,6 +498,100 @@ test('invalid pool dispatch options', async (t) => {
   const pool = new Pool('http://notahost')
   t.throws(() => pool.dispatch({}), errors.InvalidArgumentError, 'throws on invalid handler')
   t.throws(() => pool.dispatch({}, {}), errors.InvalidArgumentError, 'throws on invalid handler')
+})
+
+test('pool remains writable after a child rejects before queueing', async (t) => {
+  const server = createServer((req, res) => {
+    res.end('ok')
+  })
+  let connections = 0
+  server.on('connection', () => { connections++ })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const pool = new Pool(`http://localhost:${server.address().port}`, {
+    connections: 1
+  })
+  t.after(async () => {
+    await pool.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  await assert.rejects(
+    pool.request({ path: 123, method: 'GET' }),
+    {
+      code: 'UND_ERR_INVALID_ARG',
+      message: 'path must be a string'
+    }
+  )
+  assert.strictEqual(pool.stats.size, 0)
+  assert.strictEqual(connections, 0, 'rejected request must not initiate a connection')
+
+  const { statusCode, body } = await withTimeout(
+    pool.request({ path: '/', method: 'GET' }),
+    'pool wedged after child rejected before queueing'
+  )
+  assert.strictEqual(statusCode, 200)
+  assert.strictEqual(await body.text(), 'ok')
+  assert.strictEqual(connections, 1)
+
+  await withTimeout(
+    pool.close(),
+    'pool close hung after child rejected before queueing'
+  )
+})
+
+test('pool drain skips a queued request rejected before queueing', async (t) => {
+  let releaseFirst
+  const server = createServer((req, res) => {
+    if (req.url === '/first') {
+      res.writeHead(200)
+      res.write('first')
+      releaseFirst = () => res.end()
+    } else {
+      res.end('ok')
+    }
+  })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const pool = new Pool(`http://localhost:${server.address().port}`, {
+    connections: 1,
+    pipelining: 1
+  })
+  t.after(async () => {
+    releaseFirst?.()
+    await pool.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  const first = await pool.request({ path: '/first', method: 'GET' })
+  const rejected = pool.request({ path: 123, method: 'GET' })
+  const healthy = pool.request({ path: '/healthy', method: 'GET' })
+
+  assert.strictEqual(pool.stats.queued, 2)
+  releaseFirst()
+  releaseFirst = null
+  assert.strictEqual(await first.body.text(), 'first')
+  await assert.rejects(
+    withTimeout(rejected, 'queued invalid request did not reject'),
+    {
+      code: 'UND_ERR_INVALID_ARG',
+      message: 'path must be a string'
+    }
+  )
+
+  const { statusCode, body } = await withTimeout(
+    healthy,
+    'pool drain stopped after queued request was rejected'
+  )
+  assert.strictEqual(statusCode, 200)
+  assert.strictEqual(await body.text(), 'ok')
+
+  await withTimeout(
+    pool.close(),
+    'pool close hung after queued request was rejected'
+  )
 })
 
 test('pool dispatch', async (t) => {
