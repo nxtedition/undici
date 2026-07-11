@@ -4,6 +4,7 @@ const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { Client, errors } = require('..')
 const { createServer } = require('node:http')
+const { once } = require('node:events')
 
 test('handle headers as array', async (t) => {
   t = tspl(t, { plan: 3 })
@@ -104,6 +105,77 @@ test('handle multi-valued headers', async (t) => {
       headers
     }, () => { })
   })
+
+  await t.completed
+})
+
+test('read array-valued header elements once', async (t) => {
+  t = tspl(t, { plan: 4 })
+
+  let valueReads = 0
+  let lengthReads = 0
+  const values = new Proxy(['safe'], {
+    get (target, property, receiver) {
+      if (property === 'length') {
+        lengthReads++
+      } else if (property === '0') {
+        valueReads++
+        return valueReads < 3 ? 'safe' : 'safe\r\nx-injected: true'
+      }
+
+      return Reflect.get(target, property, receiver)
+    }
+  })
+
+  const server = createServer((req, res) => {
+    t.strictEqual(req.headers.name, 'safe')
+    t.strictEqual(req.headers['x-injected'], undefined)
+    res.end()
+  })
+  after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.close())
+
+  const { body } = await client.request({
+    path: '/',
+    method: 'GET',
+    headers: { name: values }
+  })
+  await body.dump()
+
+  t.strictEqual(valueReads, 1)
+  t.strictEqual(lengthReads, 1)
+
+  await t.completed
+})
+
+test('read invalid array-valued header elements once', async (t) => {
+  t = tspl(t, { plan: 2 })
+
+  let reads = 0
+  const values = new Proxy(['invalid'], {
+    get (target, property, receiver) {
+      if (property === '0') {
+        reads++
+        return 'invalid\r\nx-injected: true'
+      }
+
+      return Reflect.get(target, property, receiver)
+    }
+  })
+
+  const client = new Client('http://localhost:8080')
+  after(() => client.destroy())
+
+  t.rejects(client.request({
+    path: '/',
+    method: 'GET',
+    headers: { name: values }
+  }), new errors.InvalidArgumentError('invalid name header'))
+  t.strictEqual(reads, 1)
 
   await t.completed
 })
