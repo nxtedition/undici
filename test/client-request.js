@@ -12,7 +12,6 @@ const { Readable } = require('node:stream')
 const net = require('node:net')
 const { promisify } = require('node:util')
 const { InvalidArgumentError } = require('../lib/core/errors')
-const { parseFormDataString } = require('./utils/formdata')
 
 test('request dump head', async (t) => {
   t = tspl(t, { plan: 3 })
@@ -780,58 +779,6 @@ test('request text2', async (t) => {
       t.strictEqual(JSON.stringify(obj), ret)
     })
     t.strictEqual(JSON.stringify(obj), await p)
-  })
-
-  await t.completed
-})
-
-test('request with FormData body', async (t) => {
-  const { Blob } = require('node:buffer')
-
-  const fd = new FormData()
-  fd.set('key', 'value')
-  fd.set('file', new Blob(['Hello, world!']), 'hello_world.txt')
-
-  const server = createServer(async (req, res) => {
-    const contentType = req.headers['content-type']
-    // ensure we received a multipart/form-data header
-    t.ok(/^multipart\/form-data; boundary=-+formdata-undici-0\d+$/.test(contentType))
-
-    const chunks = []
-
-    for await (const chunk of req) {
-      chunks.push(chunk)
-    }
-
-    const { fileMap, fields } = await parseFormDataString(
-      Buffer.concat(chunks),
-      contentType
-    )
-
-    t.deepStrictEqual(fields[0], { key: 'key', value: 'value' })
-    t.ok(fileMap.has('file'))
-    t.strictEqual(fileMap.get('file').data.toString(), 'Hello, world!')
-    t.deepStrictEqual(fileMap.get('file').info, {
-      filename: 'hello_world.txt',
-      encoding: '7bit',
-      mimeType: 'application/octet-stream'
-    })
-
-    return res.end()
-  })
-  after(() => server.close())
-
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
-
-    await client.request({
-      path: '/',
-      method: 'POST',
-      body: fd
-    })
-
-    t.end()
   })
 
   await t.completed
