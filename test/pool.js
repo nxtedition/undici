@@ -958,3 +958,58 @@ test('pool emits drain after a dropped client is replaced while backed up', asyn
 
   await t.completed
 })
+
+test('pool does not drain queued work through a destroyed replacement client', async (t) => {
+  let acceptWork = false
+  let nextId = 0
+  const seen = []
+
+  class FakeClient extends EventEmitter {
+    constructor () {
+      super()
+      this.id = nextId++
+      this.destroyed = false
+    }
+
+    dispatch () {
+      assert.strictEqual(this.destroyed, false, 'destroyed client must not receive queued work')
+      seen.push(this)
+      return acceptWork
+    }
+
+    close (callback) {
+      callback?.(null, null)
+      return Promise.resolve()
+    }
+
+    destroy () {
+      this.destroyed = true
+      return Promise.resolve()
+    }
+  }
+
+  const pool = new Pool('http://notahost', {
+    connections: 1,
+    factory: () => new FakeClient()
+  })
+  t.after(() => pool.destroy())
+
+  const handler = { onError () {} }
+  pool.dispatch({}, handler)
+  pool.dispatch({}, handler)
+
+  const first = seen[0]
+  first.emit('connectionError', new URL('http://notahost'), [first], new Error('boom'))
+
+  acceptWork = true
+  pool.dispatch({}, handler)
+  const replacement = seen[1]
+  replacement.destroyed = true
+
+  let drained = false
+  pool.on('drain', () => { drained = true })
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.strictEqual(seen.length, 2)
+  assert.strictEqual(drained, false)
+})
