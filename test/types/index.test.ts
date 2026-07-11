@@ -110,6 +110,27 @@ async function types () {
   await response.body.bytes() satisfies Uint8Array
   await response.body.arrayBuffer() satisfies ArrayBuffer
 
+  const omittedOpaqueResponse = await client.request({
+    path: '/',
+    method: 'GET'
+  })
+  omittedOpaqueResponse.opaque satisfies null
+
+  const undefinedOpaqueResponse = await client.request({
+    path: '/',
+    method: 'GET',
+    opaque: undefined
+  })
+  undefinedOpaqueResponse.opaque satisfies null
+
+  const optionalOpaque: string | undefined = Math.random() > 0.5 ? 'value' : undefined
+  const optionalOpaqueResponse = await client.request({
+    path: '/',
+    method: 'GET',
+    opaque: optionalOpaque
+  })
+  optionalOpaqueResponse.opaque satisfies string | null
+
   client.request({ path: '/', method: 'GET', opaque: 0 }, (error, data) => {
     acceptsUnknown(error)
     data.opaque satisfies number | null | undefined
