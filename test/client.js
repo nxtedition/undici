@@ -1371,6 +1371,15 @@ test('socket end completes Content-Length response paused by backpressure', asyn
   await t.completed
 })
 
+test('socket end completes a keep-alive Content-Length response paused by backpressure', async (t) => {
+  t = tspl(t, { plan: 3 })
+  pausedAtFin(t, (socket, payload) => {
+    socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${payload.length}\r\nConnection: keep-alive\r\n\r\n`)
+    socket.write(payload)
+  }, expectComplete)
+  await t.completed
+})
+
 test('socket end completes EOF-delimited response paused by backpressure', async (t) => {
   t = tspl(t, { plan: 3 })
   pausedAtFin(t, (socket, payload) => {
@@ -1387,6 +1396,18 @@ test('socket end errors on truncated Content-Length response paused by backpress
     socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${payload.length * 2}\r\nConnection: close\r\n\r\n`)
     socket.write(payload)
   }, expectError)
+  await t.completed
+})
+
+test('socket end errors on a truncated keep-alive Content-Length response paused by backpressure', async (t) => {
+  t = tspl(t, { plan: 3 })
+  pausedAtFin(t, (socket, payload) => {
+    socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${payload.length * 2}\r\nConnection: keep-alive\r\n\r\n`)
+    socket.write(payload)
+  }, (t, payload, body, err) => {
+    t.ok(err instanceof Error, `expected an error, got ${err}`)
+    t.strictEqual(err.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
+  })
   await t.completed
 })
 
@@ -1447,6 +1468,27 @@ test('connection reset errors on truncated Content-Length response paused by bac
     t.ok(err instanceof Error, `expected an error, got ${err}`)
     // The truncation must be classified as a content-length mismatch, not a
     // generic socket error.
+    t.strictEqual(err.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
+  })
+  await t.completed
+})
+
+test('connection reset completes a keep-alive Content-Length response paused by backpressure', async (t) => {
+  t = tspl(t, { plan: 3 })
+  pausedAtReset(t, (socket, payload) => {
+    socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${payload.length}\r\nConnection: keep-alive\r\n\r\n`)
+    socket.write(payload)
+  }, expectComplete)
+  await t.completed
+})
+
+test('connection reset errors on a truncated keep-alive Content-Length response paused by backpressure', async (t) => {
+  t = tspl(t, { plan: 3 })
+  pausedAtReset(t, (socket, payload) => {
+    socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${payload.length * 2}\r\nConnection: keep-alive\r\n\r\n`)
+    socket.write(payload)
+  }, (t, payload, body, err) => {
+    t.ok(err instanceof Error, `expected an error, got ${err}`)
     t.strictEqual(err.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
   })
   await t.completed
