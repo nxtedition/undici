@@ -154,6 +154,100 @@ test('tag-spoofed Blob bodies cannot inject headers', async (t) => {
   t.strictEqual(connections, 0, 'invalid bodies are rejected before connecting')
 })
 
+test('failing Blob stream waits for an inflight pipelined request', async (t) => {
+  let releaseInflight
+  const requests = []
+  const server = createServer((req, res) => {
+    requests.push(req.url)
+
+    if (req.url === '/inflight') {
+      res.write('inflight')
+      releaseInflight = () => res.end(' complete')
+    } else if (req.url === '/blob') {
+      req.on('error', () => {})
+      req.resume()
+    } else {
+      res.end('reused')
+    }
+  })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    pipelining: 2
+  })
+  t.after(async () => {
+    await client.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  const inflight = await client.request({
+    path: '/inflight',
+    method: 'GET',
+    blocking: false
+  })
+
+  const streamError = new Error('blob iterator failed')
+  let streamCalls = 0
+  let iteratorStarts = 0
+  class FailingStreamBlob extends Blob {
+    stream () {
+      streamCalls++
+      return (async function * () {
+        iteratorStarts++
+        yield 'chunk'
+        throw streamError
+      })()
+    }
+  }
+  const blob = new FailingStreamBlob(['chunk'])
+
+  const blobRequest = withTimeout(
+    client.request({
+      path: '/blob',
+      method: 'PUT',
+      idempotent: true,
+      blocking: false,
+      body: blob
+    }),
+    10000,
+    'failing Blob stream request did not settle'
+  )
+
+  // Attach the rejection handler immediately while checking that busy() keeps
+  // the Blob iterator dormant until the preceding response is complete.
+  const blobRejected = blobRequest.then(
+    () => assert.fail('Blob stream request should reject'),
+    (err) => assert.strictEqual(err, streamError)
+  )
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.strictEqual(streamCalls, 0)
+  assert.strictEqual(iteratorStarts, 0)
+  assert.deepStrictEqual(requests, ['/inflight'])
+
+  releaseInflight()
+  assert.strictEqual(await withTimeout(
+    inflight.body.text(),
+    10000,
+    'in-flight response body did not settle'
+  ), 'inflight complete')
+  await blobRejected
+  assert.strictEqual(streamCalls, 1)
+  assert.strictEqual(iteratorStarts, 1)
+
+  const reused = await withTimeout(
+    client.request({ path: '/after', method: 'GET' }),
+    10000,
+    'client was not reusable after the Blob stream failure'
+  )
+  assert.strictEqual(reused.statusCode, 200)
+  assert.strictEqual(await withTimeout(
+    reused.body.text(),
+    10000,
+    'reused response body did not settle'
+  ), 'reused')
+})
+
 for (const accessor of ['size', 'type', 'stream']) {
   test(`throwing Blob ${accessor} accessor rejects before queueing`, async (t) => {
     const server = createServer((req, res) => {
