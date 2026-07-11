@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "exactOptionalPropertyTypes": true,
+    "lib": [
+      "ES2024"
+    ],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "noUncheckedIndexedAccess": true,
+    "strict": true,
+    "target": "ES2024",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "*.test.ts"
+  ]
+}
