@@ -63,10 +63,10 @@ test('FormData body rejects gracefully without wedging the client', async (t) =>
 // Its `assert(contentLength === body.size)` used to sit *before* the try block,
 // so when it failed the rejected promise was unobserved — an unhandled
 // rejection that can terminate the process — instead of being routed through
-// the in-try abort(err)/onError path. A blob-like body that exposes
-// arrayBuffer() but not stream() (so it takes the writeBlob path rather than
-// writeIterable) with a non-numeric size and an explicit content-length trips
-// exactly that assertion.
+// abort(err)/onError. A blob-like body that exposes arrayBuffer() but not
+// stream() (so it takes the writeBlob path rather than writeIterable), with a
+// missing size and explicit content-length, must reject with the structured
+// content-length mismatch error.
 test('blob-like body without stream() and mismatched size rejects gracefully', async (t) => {
   t = tspl(t, { plan: 2 })
 
@@ -91,16 +91,19 @@ test('blob-like body without stream() and mismatched size rejects gracefully', a
     }
   }
 
-  await t.rejects(withTimeout(
-    client.request({
-      path: '/',
-      method: 'POST',
-      body: blobLike,
-      headers: { 'content-length': '5' }
-    }),
-    10000,
-    'blob-like request neither resolved nor rejected (unhandled rejection?)'
-  ))
+  await t.rejects(
+    withTimeout(
+      client.request({
+        path: '/',
+        method: 'POST',
+        body: blobLike,
+        headers: { 'content-length': '5' }
+      }),
+      10000,
+      'blob-like request neither resolved nor rejected (unhandled rejection?)'
+    ),
+    errors.RequestContentLengthMismatchError
+  )
 
   // The client must remain usable afterwards.
   const { statusCode, body } = await withTimeout(

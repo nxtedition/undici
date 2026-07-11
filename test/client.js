@@ -1,5 +1,6 @@
 'use strict'
 
+const assert = require('node:assert')
 const { tspl } = require('@matteo.collina/tspl')
 const { readFileSync, createReadStream } = require('node:fs')
 const { createServer } = require('node:http')
@@ -19,6 +20,31 @@ const hasIPv6 = (() => {
     (name) => re.test(name) && iFaces[name].some(({ family }) => family === 6)
   )
 })()
+
+test('passes socketPath to a custom connect function', async (t) => {
+  const connectError = new Error('custom connect error')
+  const socketPath = '/var/run/test.sock'
+  let receivedSocketPath
+  let receivedThis
+
+  const client = new Client('http://localhost', {
+    socketPath,
+    connect (opts, callback) {
+      receivedSocketPath = opts.socketPath
+      receivedThis = this
+      callback(connectError, null)
+    }
+  })
+  t.after(() => client.close())
+
+  const err = await new Promise((resolve) => {
+    client.request({ path: '/', method: 'GET' }, resolve)
+  })
+
+  assert.strictEqual(err, connectError)
+  assert.strictEqual(receivedSocketPath, socketPath)
+  assert.strictEqual(receivedThis, client)
+})
 
 test('basic get', async (t) => {
   t = tspl(t, { plan: 24 })
@@ -961,7 +987,7 @@ test('basic POST with transfer encoding: chunked', async (t) => {
   await t.completed
 })
 
-test('basic POST with empty stream', async (t) => {
+test('POST with an already-ended empty stream completes and destroys the body', { timeout: 10000 }, async (t) => {
   t = tspl(t, { plan: 4 })
 
   const server = createServer(function (req, res) {
@@ -986,6 +1012,8 @@ test('basic POST with empty stream', async (t) => {
         t.strictEqual(body.destroyed, true)
       })
     })
+    // EOF is signalled, but 'end' is not emitted until the stream is consumed.
+    // The zero-length write fast path must still drive that lifecycle.
     body.push(null)
     client.request({
       path: '/',
@@ -1003,6 +1031,39 @@ test('basic POST with empty stream', async (t) => {
     })
   })
 
+  await t.completed
+})
+
+test('POST with a zero-length stream-like body without resume', async (t) => {
+  t = tspl(t, { plan: 3 })
+
+  const server = createServer((req, res) => {
+    t.strictEqual(req.headers['content-length'], '0')
+    res.end()
+  })
+  after(() => server.close())
+  await new Promise(resolve => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.close())
+
+  const body = new EE()
+  body.pipe = () => body
+  body._readableState = {
+    autoDestroy: true,
+    objectMode: false,
+    ended: true,
+    length: 0
+  }
+
+  const response = await client.request({
+    path: '/',
+    method: 'POST',
+    body
+  })
+
+  t.strictEqual(response.statusCode, 200)
+  t.strictEqual(await response.body.text(), '')
   await t.completed
 })
 

@@ -208,11 +208,10 @@ describe('Readable', () => {
     t.strictEqual(text, 'hello world')
   })
 
-  // Regression: consumeStart() is called as a plain function (not a method),
-  // so `this` is undefined in strict mode. For a body that had already emitted
-  // 'end' but was never disturbed (an empty body resume()'d to completion),
-  // the endEmitted branch used to dereference `this[kConsume]` and throw an
-  // uncaught TypeError instead of resolving the consume.
+  // Regression: for a body that has already emitted 'end' but was never
+  // disturbed, consumeEnd() completes synchronously and consumeFinish() nulls
+  // consume.stream. consumeStart() must return immediately instead of falling
+  // through to resume()/read() on that null stream.
   test('consume on an already-ended, undisturbed empty body resolves', async function (t) {
     t = tspl(t, { plan: 1 })
 
@@ -226,8 +225,8 @@ describe('Readable', () => {
     r.resume()
     await once(r, 'end')
 
-    // endEmitted is now true while the stream is not disturbed, so consume()
-    // reaches consumeStart() with endEmitted already set.
+    // endEmitted is true while the stream is not disturbed, so consume() reaches
+    // the synchronous completion path in consumeStart().
     const text = await r.text()
 
     t.strictEqual(text, '')

@@ -1,5 +1,6 @@
 'use strict'
 
+const assert = require('node:assert')
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { EventEmitter } = require('node:events')
@@ -67,6 +68,44 @@ test('does not throw when connect is a function', async (t) => {
   t = tspl(t, { plan: 1 })
 
   t.doesNotThrow(() => new Pool('http://localhost', { connect: () => {} }))
+})
+
+test('rejects a non-string socketPath with built-in and custom connectors', () => {
+  for (const connect of [undefined, () => {}]) {
+    assert.throws(
+      () => new Pool('http://localhost', { socketPath: 123, connect }),
+      {
+        name: 'InvalidArgumentError',
+        code: 'UND_ERR_INVALID_ARG',
+        message: 'invalid socketPath'
+      }
+    )
+  }
+})
+
+test('passes socketPath to a custom connect function', async (t) => {
+  const connectError = new Error('custom connect error')
+  const socketPath = '/var/run/test.sock'
+  let receivedSocketPath
+  let receivedThis
+
+  const pool = new Pool('http://localhost', {
+    socketPath,
+    connect (opts, callback) {
+      receivedSocketPath = opts.socketPath
+      receivedThis = this
+      callback(connectError, null)
+    }
+  })
+  t.after(() => pool.close())
+
+  const err = await new Promise((resolve) => {
+    pool.request({ path: '/', method: 'GET' }, resolve)
+  })
+
+  assert.strictEqual(err, connectError)
+  assert.strictEqual(receivedSocketPath, socketPath)
+  assert.ok(receivedThis instanceof Client)
 })
 
 test('throws when allowH2 is enabled (HTTP/1.1 only build)', async (t) => {
