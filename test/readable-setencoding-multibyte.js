@@ -4,6 +4,7 @@ const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { createServer } = require('node:http')
 const { Client } = require('..')
+const BodyReadable = require('../lib/api/readable')
 
 test('setEncoding(\'utf8\') handles 3-byte UTF-8 characters split across chunks', async (t) => {
   t = tspl(t, { plan: 2 })
@@ -55,4 +56,24 @@ test('setEncoding(\'utf8\') handles 3-byte UTF-8 characters split across chunks'
   })
 
   await t.completed
+})
+
+test('body mixins preserve bytes buffered after setEncoding()', async (t) => {
+  t = tspl(t, { plan: 1 })
+
+  const text = `prefix-${'傳'}-suffix`
+  const bytes = Buffer.from(text)
+  const split = bytes.indexOf(0xe5) + 1
+  const body = new BodyReadable({
+    resume () {},
+    abort () {}
+  })
+
+  body.setEncoding('utf8')
+  body.push(bytes.subarray(0, split))
+  await new Promise(resolve => setImmediate(resolve))
+  body.push(bytes.subarray(split))
+  body.push(null)
+
+  t.strictEqual(await body.text(), text)
 })
