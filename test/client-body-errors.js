@@ -226,7 +226,11 @@ test('failing Blob stream waits for an inflight pipelined request', async (t) =>
   assert.deepStrictEqual(requests, ['/inflight'])
 
   releaseInflight()
-  assert.strictEqual(await inflight.body.text(), 'inflight complete')
+  assert.strictEqual(await withTimeout(
+    inflight.body.text(),
+    10000,
+    'in-flight response body did not settle'
+  ), 'inflight complete')
   await blobRejected
   assert.strictEqual(streamCalls, 1)
   assert.strictEqual(iteratorStarts, 1)
@@ -237,7 +241,11 @@ test('failing Blob stream waits for an inflight pipelined request', async (t) =>
     'client was not reusable after the Blob stream failure'
   )
   assert.strictEqual(reused.statusCode, 200)
-  assert.strictEqual(await reused.body.text(), 'reused')
+  assert.strictEqual(await withTimeout(
+    reused.body.text(),
+    10000,
+    'reused response body did not settle'
+  ), 'reused')
 })
 
 for (const accessor of ['size', 'type', 'stream']) {
