@@ -184,7 +184,8 @@ async function types () {
     origin: new URL('http://localhost'),
     method: 'GET',
     path: '/',
-    headers: [['accept', 'application/json']]
+    query: { page: 1 },
+    headers: ['accept', 'application/json', 'set-cookie', ['a=1', 'b=2']]
   })
   util.cache.assertCacheKey(cacheKey)
 

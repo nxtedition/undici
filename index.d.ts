@@ -467,12 +467,20 @@ export namespace util {
   ): T
 
   namespace cache {
-    type Headers = Record<string, string | string[]> | Iterable<readonly [string, string]> | null
+    type HeaderValue = string | readonly string[]
+    /** Alternating header names and values: `[name, value, ...]`. */
+    type FlatHeaders = readonly HeaderValue[]
+    type Headers =
+      | Record<string, HeaderValue>
+      | FlatHeaders
+      | Iterable<readonly [string, HeaderValue]>
+      | null
 
     interface KeyInput {
       origin: string | URL
       method: string
-      path: string
+      path?: string
+      query?: ParsedUrlQueryInput
       headers?: Headers
     }
 
