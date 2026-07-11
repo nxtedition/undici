@@ -153,6 +153,17 @@ async function types () {
     opaque: Symbol('opaque')
   }) satisfies Dispatcher.ResponseData<symbol>
 
+  // @ts-expect-error Legacy structural BlobLike shims are no longer accepted.
+  await request('http://localhost/path', {
+    method: 'POST',
+    body: {
+      [Symbol.toStringTag]: 'Blob',
+      async arrayBuffer () {
+        return new ArrayBuffer(0)
+      }
+    }
+  })
+
   request('http://localhost', (error, data) => {
     acceptsUnknown(error)
     data.opaque satisfies null | undefined

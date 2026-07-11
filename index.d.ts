@@ -20,17 +20,6 @@ export type HeadersInit =
 
 export type RequestBodyChunk = string | ArrayBuffer | ArrayBufferView
 
-export interface BlobLikeBase {
-  readonly size?: number
-  readonly type?: string
-  readonly [Symbol.toStringTag]: 'Blob' | 'File'
-}
-
-export type BlobLike = BlobLikeBase & (
-  | { stream(): Iterable<RequestBodyChunk> | AsyncIterable<RequestBodyChunk> }
-  | { arrayBuffer(): Promise<ArrayBuffer> }
-)
-
 export type RequestBody =
   | string
   | ArrayBuffer
@@ -39,7 +28,6 @@ export type RequestBody =
   | Iterable<RequestBodyChunk>
   | AsyncIterable<RequestBodyChunk>
   | Blob
-  | BlobLike
   | null
 
 /** A structural EventTarget-style signal accepted by request() and Readable.dump(). */

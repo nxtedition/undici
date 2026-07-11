@@ -4,6 +4,7 @@ const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { createServer } = require('node:http')
 const { once } = require('node:events')
+const { Blob } = require('node:buffer')
 const { Client, errors } = require('..')
 
 // Race a promise against a timeout so a regression (a wedged/never-settling
@@ -63,11 +64,11 @@ test('FormData body rejects gracefully without wedging the client', async (t) =>
 // Its `assert(contentLength === body.size)` used to sit *before* the try block,
 // so when it failed the rejected promise was unobserved — an unhandled
 // rejection that can terminate the process — instead of being routed through
-// abort(err)/onError. A blob-like body that exposes arrayBuffer() but not
+// abort(err)/onError. A Blob subclass that exposes arrayBuffer() but not
 // stream() (so it takes the writeBlob path rather than writeIterable), with a
 // missing size and explicit content-length, must reject with the structured
 // content-length mismatch error.
-test('blob-like body without stream() and mismatched size rejects gracefully', async (t) => {
+test('Blob subclass without stream() and mismatched size rejects gracefully', async (t) => {
   t = tspl(t, { plan: 2 })
 
   const server = createServer((req, res) => {
@@ -81,26 +82,33 @@ test('blob-like body without stream() and mismatched size rejects gracefully', a
   const client = new Client(`http://localhost:${server.address().port}`)
   after(() => client.close())
 
-  const blobLike = {
-    [Symbol.toStringTag]: 'Blob',
-    type: 'text/plain',
+  class ArrayBufferOnlyBlob extends Blob {
     // No `size` (so bodyLength() is null and contentLength comes from the
     // header below) and no stream() (so writeBlob handles it).
+    get size () {
+      return undefined
+    }
+
+    get stream () {
+      return undefined
+    }
+
     async arrayBuffer () {
       return new TextEncoder().encode('hello').buffer
     }
   }
+  const blob = new ArrayBufferOnlyBlob(['hello'], { type: 'text/plain' })
 
   await t.rejects(
     withTimeout(
       client.request({
         path: '/',
         method: 'POST',
-        body: blobLike,
+        body: blob,
         headers: { 'content-length': '5' }
       }),
       10000,
-      'blob-like request neither resolved nor rejected (unhandled rejection?)'
+      'Blob request neither resolved nor rejected (unhandled rejection?)'
     ),
     errors.RequestContentLengthMismatchError
   )
@@ -115,7 +123,7 @@ test('blob-like body without stream() and mismatched size rejects gracefully', a
   await body.dump()
 })
 
-test('blob-like stream() errors reject gracefully without wedging the client', async (t) => {
+test('Blob subclass stream() errors reject gracefully without wedging the client', async (t) => {
   t = tspl(t, { plan: 4 })
 
   const server = createServer((req, res) => {
@@ -132,19 +140,18 @@ test('blob-like stream() errors reject gracefully without wedging the client', a
   after(() => client.close())
 
   const streamError = new Error('blob stream failed')
-  const blobLike = {
-    [Symbol.toStringTag]: 'Blob',
-    size: 1,
+  class ThrowingStreamBlob extends Blob {
     stream () {
       throw streamError
     }
   }
+  const blob = new ThrowingStreamBlob(['x'])
 
   try {
     await withTimeout(
-      client.request({ path: '/', method: 'POST', body: blobLike }),
+      client.request({ path: '/', method: 'POST', body: blob }),
       10000,
-      'blob-like request neither resolved nor rejected'
+      'Blob request neither resolved nor rejected'
     )
     t.fail('request should reject')
   } catch (err) {
@@ -154,9 +161,58 @@ test('blob-like stream() errors reject gracefully without wedging the client', a
   const { statusCode, body } = await withTimeout(
     client.request({ path: '/', method: 'GET' }),
     10000,
-    'client wedged after blob-like stream() error'
+    'client wedged after Blob stream() error'
   )
   t.strictEqual(statusCode, 200)
   t.strictEqual(await body.text(), 'ok')
   t.strictEqual(connections, 1, 'the healthy connection remains reusable')
+})
+
+test('tag-spoofed Blob bodies cannot inject headers', async (t) => {
+  t = tspl(t, { plan: 4 })
+
+  let requests = 0
+  let connections = 0
+  const server = createServer((req, res) => {
+    requests++
+    res.end('unexpected')
+  })
+  server.on('connection', () => { connections++ })
+  after(() => server.close())
+
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.close())
+
+  const bodies = [
+    {
+      [Symbol.toStringTag]: 'Blob',
+      type: 'text/plain\r\nx-injected-via-type: yes',
+      size: 1,
+      stream () {
+        return [Buffer.from('x')]
+      }
+    },
+    {
+      [Symbol.toStringTag]: 'File',
+      type: 'text/plain',
+      size: '1\r\nx-injected-via-size: yes',
+      stream () {
+        return [Buffer.from('x')]
+      }
+    }
+  ]
+
+  for (const body of bodies) {
+    await t.rejects(
+      client.request({ path: '/', method: 'POST', body }),
+      errors.InvalidArgumentError
+    )
+  }
+
+  await new Promise(resolve => setImmediate(resolve))
+  t.strictEqual(requests, 0, 'no request reaches the server')
+  t.strictEqual(connections, 0, 'invalid bodies are rejected before connecting')
 })
