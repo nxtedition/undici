@@ -33,3 +33,27 @@ test('only the first body mixin call in a turn consumes the body', async () => {
   assert.strictEqual(secondResult.reason.message, 'unusable')
   assert.strictEqual(body.bodyUsed, true)
 })
+
+test('a later body mixin call returns a rejected promise', async () => {
+  const body = new Readable({
+    resume () {},
+    abort () {}
+  })
+
+  const first = body.text()
+  await Promise.resolve()
+
+  let second
+  assert.doesNotThrow(() => {
+    second = body.json()
+  })
+
+  body.push(Buffer.from('hello world'))
+  body.push(null)
+
+  assert.strictEqual(await first, 'hello world')
+  await assert.rejects(second, {
+    name: 'TypeError',
+    message: 'unusable'
+  })
+})
