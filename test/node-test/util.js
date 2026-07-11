@@ -35,6 +35,56 @@ test('isDestroyed supports Node and duck-typed streams', () => {
   assert.strictEqual(util.isDestroyed(duck), true)
 })
 
+test('hasSafeIterator', () => {
+  assert.equal(util.hasSafeIterator(null), false)
+  assert.equal(util.hasSafeIterator(undefined), false)
+  assert.equal(util.hasSafeIterator({}), false)
+  assert.equal(util.hasSafeIterator(Object.create(null)), false)
+  assert.equal(util.hasSafeIterator(Object.create(Object.create(null))), false)
+  assert.equal(util.hasSafeIterator(new Map()), true)
+
+  class HeaderMap extends Map {}
+  assert.equal(util.hasSafeIterator(new HeaderMap()), true)
+
+  const customPrototype = {
+    * [Symbol.iterator] () {}
+  }
+  assert.equal(util.hasSafeIterator(Object.create(customPrototype)), true)
+
+  const shadowedIterator = Object.create(customPrototype)
+  shadowedIterator[Symbol.iterator] = undefined
+  assert.equal(util.hasSafeIterator(shadowedIterator), false)
+
+  const originalIterator = Object.getOwnPropertyDescriptor(
+    Object.prototype,
+    Symbol.iterator
+  )
+  try {
+    // eslint-disable-next-line no-extend-native
+    Object.defineProperty(Object.prototype, Symbol.iterator, {
+      configurable: true,
+      value: customPrototype[Symbol.iterator]
+    })
+
+    assert.equal(util.hasSafeIterator({}), false)
+    assert.equal(util.hasSafeIterator(Object.create({})), false)
+    assert.equal(util.hasSafeIterator(Object.prototype), false)
+    assert.equal(util.hasSafeIterator(new HeaderMap()), true)
+    assert.equal(util.hasSafeIterator(Object.create(customPrototype)), true)
+  } finally {
+    if (originalIterator === undefined) {
+      delete Object.prototype[Symbol.iterator]
+    } else {
+      // eslint-disable-next-line no-extend-native
+      Object.defineProperty(
+        Object.prototype,
+        Symbol.iterator,
+        originalIterator
+      )
+    }
+  }
+})
+
 test('addAbortListener cannot be blocked by stopImmediatePropagation', () => {
   const controller = new AbortController()
   let calls = 0

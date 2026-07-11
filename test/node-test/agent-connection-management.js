@@ -129,6 +129,67 @@ describe('Agent dispatcher lifecycle', () => {
     assert.equal(dispatchers.length, 2)
   })
 
+  test('keeps a custom dispatcher without private lifecycle symbols', async t => {
+    const dispatchers = []
+
+    class PublicDispatcher extends EventEmitter {
+      constructor () {
+        super()
+        this.closed = false
+        this.destroyed = false
+        this.dispatchCount = 0
+      }
+
+      dispatch () {
+        this.dispatchCount++
+        return true
+      }
+
+      close () {
+        this.closed = true
+        return Promise.resolve()
+      }
+
+      destroy () {
+        this.destroyed = true
+        return Promise.resolve()
+      }
+    }
+
+    const agent = new Agent({
+      factory () {
+        const dispatcher = new PublicDispatcher()
+        dispatchers.push(dispatcher)
+        return dispatcher
+      }
+    })
+    t.after(() => agent.destroy())
+
+    const opts = {
+      origin: 'http://example.test',
+      path: '/',
+      method: 'GET'
+    }
+
+    assert.equal(agent.dispatch(opts, handler), true)
+    const dispatcher = dispatchers[0]
+    dispatcher.emit('connect', new URL(opts.origin), [dispatcher])
+    dispatcher.emit('drain', new URL(opts.origin), [dispatcher])
+
+    assert.equal(dispatcher.closed, false)
+    assert.equal(agent.dispatch(opts, handler), true)
+    assert.equal(dispatchers.length, 1)
+    assert.equal(dispatcher.dispatchCount, 2)
+
+    dispatcher.closed = true
+    dispatcher.emit('drain', new URL(opts.origin), [dispatcher])
+    assert.equal(agent.dispatch(opts, handler), true)
+    assert.equal(dispatchers.length, 2)
+
+    await agent.close()
+    assert.equal(dispatchers[1].closed, true)
+  })
+
   test('releases a Pool after a failed connection settles', async t => {
     const dispatchers = []
     const connectError = Object.assign(new Error('connect failed'), {
