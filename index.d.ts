@@ -116,7 +116,7 @@ export namespace Dispatcher {
   }
 
   interface RequestOptions<TOpaque = null> extends Omit<DispatchOptions, 'upgrade'> {
-    /** Passed through unchanged on successful responses. */
+    /** Passed through on successful responses; nullish values are normalized to null. */
     opaque?: TOpaque
     signal?: RequestSignal | null
     highWaterMark?: number | null
@@ -130,7 +130,8 @@ export namespace Dispatcher {
     statusCode: number
     headers: IncomingHttpHeaders
     trailers: IncomingHttpHeaders
-    opaque: TOpaque
+    /** The request opaque value, with null and undefined normalized to null. */
+    opaque: TOpaque extends null | undefined ? null : TOpaque
     body: Readable
     context: unknown
   }
