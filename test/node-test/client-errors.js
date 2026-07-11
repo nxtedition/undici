@@ -988,7 +988,7 @@ socketFailEndWrite(consts.STREAM)
 socketFailEndWrite(consts.ASYNC_ITERATOR)
 
 test('queued request should not fail on socket destroy', async (t) => {
-  const p = tspl(t, { plan: 4 })
+  const p = tspl(t, { plan: 5 })
 
   const server = createServer()
   server.on('request', (req, res) => {
@@ -1007,16 +1007,20 @@ test('queued request should not fail on socket destroy', async (t) => {
       method: 'GET'
     }, (err, data) => {
       p.ifError(err)
-      data.body.resume().on('error', () => {
+      data.body.resume().once('error', (err) => {
+        p.fail(err)
+      }).once('end', () => {
         p.ok(1)
       })
-      client[kSocket].destroy()
+      const socket = client[kSocket]
+      socket.destroy()
       client.request({
         path: '/',
         method: 'GET'
       }, (err, data) => {
         p.ifError(err)
-        data.body.resume().on('end', () => {
+        p.notStrictEqual(client[kSocket], socket)
+        data.body.resume().once('end', () => {
           p.ok(1)
         })
       })
