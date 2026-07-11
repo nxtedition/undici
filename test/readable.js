@@ -187,6 +187,23 @@ describe('Readable', () => {
     await t.rejects(text, error)
   })
 
+  test('destroy rejects a pending body mixin after readable observation', { timeout: 1000 }, async function (t) {
+    t = tspl(t, { plan: 1 })
+
+    const r = new Readable({
+      resume () {},
+      abort () {}
+    })
+    r.on('readable', () => {})
+    r.on('error', () => {})
+
+    const text = r.text()
+    const error = new Error('kaboom')
+    r.destroy(error)
+
+    await t.rejects(text, error)
+  })
+
   test('.arrayBuffer()', async function (t) {
     t = tspl(t, { plan: 1 })
 
