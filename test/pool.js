@@ -1,6 +1,7 @@
 'use strict'
 
 const assert = require('node:assert')
+const net = require('node:net')
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { EventEmitter } = require('node:events')
@@ -14,6 +15,7 @@ const {
   kSize,
   kUrl
 } = require('../lib/core/symbols')
+const { kClients } = require('../lib/dispatcher/pool-base')
 const {
   Client,
   Pool,
@@ -869,8 +871,8 @@ test('pool destroy fails queued requests', async (t) => {
 // pool's own flag, and `!this[kNeedDrain] && pool[kNeedDrain]` collapsed to
 // `!pool[kNeedDrain] && pool[kNeedDrain]` (always false) so the pool 'drain'
 // event was never emitted from that path. Reproduced by dropping a client via
-// connectionError (which leaves the pool backed up) and dispatching again,
-// which adds a replacement client and triggers the kAddClient drain path.
+// connectionError (which leaves the pool backed up) and replacing that client,
+// which triggers the kAddClient drain path.
 test('pool emits drain after a dropped client is replaced while backed up', async (t) => {
   t = tspl(t, { plan: 7 })
 
@@ -933,9 +935,10 @@ test('pool emits drain after a dropped client is replaced while backed up', asyn
     drainedTargets = targets
   })
 
-  // Creates a replacement client and calls kAddClient while pool[kNeedDrain] is
-  // still true -> schedules the kOnDrain microtask. The replacement itself
-  // applies backpressure, so that microtask must not dispatch queued work yet.
+  // Uses the replacement client created after connectionError. kAddClient saw
+  // pool[kNeedDrain] still true and scheduled the kOnDrain microtask. The
+  // replacement itself applies backpressure, so that microtask must not
+  // dispatch queued work yet.
   pool.dispatch({}, noopHandler) // -> c1 (busy: dispatch returns false)
 
   // Flush the synthetic drain microtask. It must respect the replacement
@@ -1012,4 +1015,180 @@ test('pool does not drain queued work through a destroyed replacement client', a
 
   assert.strictEqual(seen.length, 2)
   assert.strictEqual(drained, false)
+})
+
+test('pool detaches a failed client before resuming queued work', async (t) => {
+  let acceptWork = false
+  const clients = []
+  const seen = []
+
+  class FakeClient extends EventEmitter {
+    constructor () {
+      super()
+      this.closed = false
+      this.destroyed = false
+      clients.push(this)
+    }
+
+    dispatch (opts) {
+      seen.push({ client: this, opts })
+      return acceptWork
+    }
+
+    close (callback) {
+      this.closed = true
+      callback?.(null, null)
+      return Promise.resolve()
+    }
+
+    destroy () {
+      this.destroyed = true
+      return Promise.resolve()
+    }
+  }
+
+  const pool = new Pool('http://notahost', {
+    connections: 1,
+    factory: () => new FakeClient()
+  })
+  t.after(() => pool.destroy())
+
+  const handler = { onError () {} }
+  assert.strictEqual(pool.dispatch({ path: '/first' }, handler), false)
+  assert.strictEqual(pool.dispatch({ path: '/queued' }, handler), false)
+  assert.strictEqual(seen.length, 1)
+  assert.strictEqual(pool.stats.queued, 1)
+
+  const failed = clients[0]
+  failed.emit('connectionError', new URL('http://notahost'), [failed], new Error('boom'))
+
+  assert.strictEqual(clients.length, 2, 'connectionError creates a tracked replacement')
+  const replacement = clients[1]
+  assert.deepStrictEqual(pool[kClients], [replacement])
+  assert.deepStrictEqual(failed.eventNames(), [], 'all pool listeners are detached')
+
+  failed.emit('drain', new URL('http://notahost'), [failed])
+  assert.strictEqual(seen.length, 1, 'a removed client cannot drain pool work')
+
+  acceptWork = true
+  await new Promise((resolve) => setImmediate(resolve))
+
+  assert.strictEqual(seen.length, 2)
+  assert.strictEqual(seen[1].client, replacement, 'queued work uses the tracked replacement')
+  assert.strictEqual(seen[1].opts.path, '/queued')
+  assert.strictEqual(pool.stats.queued, 0)
+})
+
+test('pool keeps retried queued work tracked after a connection error', async (t) => {
+  const serverSockets = new Set()
+  const paths = []
+  const server = createServer((req, res) => {
+    paths.push(req.url)
+    res.setHeader('connection', 'keep-alive')
+    res.end('ok')
+  })
+  server.keepAliveTimeout = 60e3
+  server.on('connection', (socket) => {
+    serverSockets.add(socket)
+    socket.on('close', () => serverSockets.delete(socket))
+  })
+
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
+      resolve()
+    })
+  })
+
+  let attempts = 0
+  const pool = new Pool(`http://127.0.0.1:${server.address().port}`, {
+    connections: 1,
+    connect (opts, callback) {
+      if (++attempts === 1) {
+        queueMicrotask(() => {
+          const err = new Error('synthetic first-connect failure')
+          err.code = 'ECONNREFUSED'
+          callback(err)
+        })
+        return
+      }
+
+      const socket = net.connect({
+        host: opts.hostname,
+        port: Number(opts.port)
+      })
+      const onError = (err) => callback(err)
+      socket.once('error', onError)
+      socket.once('connect', () => {
+        socket.off('error', onError)
+        callback(null, socket)
+      })
+    }
+  })
+  t.after(async () => {
+    await pool.destroy()
+    for (const socket of serverSockets) {
+      socket.destroy()
+    }
+    if (server.listening) {
+      await new Promise((resolve) => server.close(resolve))
+    }
+  })
+
+  function completion () {
+    let resolve
+    const promise = new Promise((_resolve) => { resolve = _resolve })
+    return {
+      promise,
+      handler: {
+        onConnect () {},
+        onHeaders () { return true },
+        onData () { return true },
+        onComplete () { resolve(null) },
+        onError (err) { resolve(err) }
+      }
+    }
+  }
+
+  const first = completion()
+  const second = completion()
+  const firstWritable = pool.dispatch({
+    path: '/first',
+    method: 'POST',
+    body: (async function * () { yield Buffer.from('x') })()
+  }, first.handler)
+  const failed = pool[kClients][0]
+  const secondWritable = pool.dispatch({
+    path: '/queued',
+    method: 'GET'
+  }, second.handler)
+
+  assert.strictEqual(firstWritable, false)
+  assert.strictEqual(secondWritable, false)
+  assert.strictEqual(pool.stats.queued, 1)
+
+  const [firstError, secondError] = await Promise.all([
+    first.promise,
+    second.promise
+  ])
+
+  assert.strictEqual(firstError.code, 'ECONNREFUSED')
+  assert.strictEqual(secondError, null)
+  assert.strictEqual(attempts, 2)
+  assert.deepStrictEqual(paths, ['/queued'])
+  assert.strictEqual(pool[kClients].length, 1)
+  assert.notStrictEqual(pool[kClients][0], failed, 'the successful retry is tracked')
+  assert.deepStrictEqual(failed.eventNames(), [], 'the failed client stays detached')
+  assert.strictEqual(serverSockets.size, 1)
+
+  const socketsClosed = Promise.all([...serverSockets].map((socket) => (
+    socket.destroyed
+      ? Promise.resolve()
+      : new Promise((resolve) => socket.once('close', resolve))
+  )))
+  await pool.destroy()
+  await socketsClosed
+
+  assert.strictEqual(serverSockets.size, 0, 'pool.destroy closes the replacement socket')
 })
