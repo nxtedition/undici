@@ -371,20 +371,20 @@ describe('Should include headers from iterable objects', scope => {
     })
   })
 
-  test('Should include headers from plain objects with polluted Object.prototype[Symbol.iterator]', async t => {
+  test('Should include headers whose prototype inherits a polluted Object.prototype[Symbol.iterator]', async t => {
     t = tspl(t, { plan: 3 })
 
     const server = createServer({ joinDuplicateHeaders: true }, (req, res) => {
+      res.statusCode = 200
+      res.end('hello')
       t.strictEqual('GET', req.method)
       t.strictEqual(`localhost:${server.address().port}`, req.headers.host)
       t.strictEqual(req.headers.hello, 'world')
-      res.statusCode = 200
-      res.end('hello')
     })
 
-    const headers = {
+    const headers = Object.assign(Object.create({}), {
       hello: 'world'
-    }
+    })
 
     const originalIterator = Object.prototype[Symbol.iterator]
     // eslint-disable-next-line no-extend-native
