@@ -125,6 +125,39 @@ describe('Readable', () => {
     t.deepStrictEqual(obj, { hello: 'world' })
   })
 
+  test('.json() rejects invalid JSON without aborting the completed body', async function (t) {
+    t = tspl(t, { plan: 2 })
+
+    let aborts = 0
+    const r = new Readable({
+      resume () {},
+      abort () { aborts++ }
+    })
+
+    r.push(Buffer.from('not json'))
+    r.push(null)
+
+    await t.rejects(r.json(), SyntaxError)
+    t.strictEqual(aborts, 0)
+  })
+
+  test('.json() preserves its parse error after the body already ended', async function (t) {
+    t = tspl(t, { plan: 2 })
+
+    let aborts = 0
+    const r = new Readable({
+      resume () {},
+      abort () { aborts++ }
+    })
+
+    r.push(null)
+    r.resume()
+    await once(r, 'end')
+
+    await t.rejects(r.json(), SyntaxError)
+    t.strictEqual(aborts, 0)
+  })
+
   test('.json() ignores late chunks after close', async function (t) {
     t = tspl(t, { plan: 2 })
 
