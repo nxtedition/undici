@@ -5,6 +5,15 @@ const { test, describe } = require('node:test')
 const { once } = require('node:events')
 const Readable = require('../lib/api/readable')
 
+async function isCollected (ref) {
+  for (let i = 0; i < 10 && ref.deref() !== undefined; i++) {
+    await new Promise(resolve => setImmediate(resolve))
+    global.gc()
+  }
+
+  return ref.deref() === undefined
+}
+
 describe('Readable', () => {
   test('avoid body reordering', async function (t) {
     t = tspl(t, { plan: 1 })
@@ -110,13 +119,55 @@ describe('Readable', () => {
     r.destroy()
     await closed
 
-    for (let i = 0; i < 10 && rawChunkRef.deref() !== undefined; i++) {
-      await new Promise(resolve => setImmediate(resolve))
-      global.gc()
+    t.strictEqual(aborts, 1)
+    t.strictEqual(await isCollected(rawChunkRef), true)
+  })
+
+  test('flowing consumption releases preserved chunks while open', async function (t) {
+    if (typeof global.gc !== 'function') {
+      throw new Error('gc is not available. Run with \'--expose-gc\'.')
     }
 
-    t.strictEqual(aborts, 1)
-    t.strictEqual(rawChunkRef.deref() === undefined, true)
+    const testContext = t
+    t = tspl(t, { plan: 5 })
+
+    const r = new Readable({
+      resume () {},
+      abort () {}
+    })
+    r.on('error', () => {})
+    testContext.after(() => r.destroy())
+    r.setEncoding('utf8')
+
+    const firstChunkRef = (() => {
+      const chunk = Buffer.allocUnsafeSlow(64 * 1024).fill(0x61)
+      r.push(chunk)
+      return new WeakRef(chunk)
+    })()
+
+    let bytesRead = 0
+    const firstData = new Promise(resolve => {
+      r.on('data', chunk => {
+        bytesRead += Buffer.byteLength(chunk)
+        resolve()
+      })
+    })
+
+    await firstData
+    t.strictEqual(bytesRead, 64 * 1024)
+    t.strictEqual(await isCollected(firstChunkRef), true)
+
+    // The stream is now fully flowing, so push() emits this chunk directly
+    // without the overridden read() returning it.
+    const secondChunkRef = (() => {
+      const chunk = Buffer.allocUnsafeSlow(64 * 1024).fill(0x62)
+      r.push(chunk)
+      return new WeakRef(chunk)
+    })()
+
+    t.strictEqual(bytesRead, 128 * 1024)
+    t.strictEqual(await isCollected(secondChunkRef), true)
+    t.strictEqual(r.destroyed || r.readableEnded, false)
   })
 
   test('destroy rejects a pending encoded body mixin', async function (t) {
