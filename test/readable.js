@@ -82,6 +82,60 @@ describe('Readable', () => {
     t.strictEqual(await r.text().catch(err => err), err)
   })
 
+  test('destroy releases raw chunks preserved by setEncoding', async function (t) {
+    if (typeof global.gc !== 'function') {
+      throw new Error('gc is not available. Run with \'--expose-gc\'.')
+    }
+
+    t = tspl(t, { plan: 2 })
+
+    let aborts = 0
+    const r = new Readable({
+      resume () {},
+      abort () {
+        aborts++
+      }
+    })
+
+    r.on('error', () => {})
+    r.setEncoding('utf8')
+
+    const rawChunkRef = (() => {
+      const chunk = Buffer.allocUnsafeSlow(64 * 1024).fill(0x61)
+      r.push(chunk)
+      return new WeakRef(chunk)
+    })()
+
+    const closed = new Promise(resolve => r.once('close', resolve))
+    r.destroy()
+    await closed
+
+    for (let i = 0; i < 10 && rawChunkRef.deref() !== undefined; i++) {
+      await new Promise(resolve => setImmediate(resolve))
+      global.gc()
+    }
+
+    t.strictEqual(aborts, 1)
+    t.strictEqual(rawChunkRef.deref() === undefined, true)
+  })
+
+  test('destroy rejects a pending encoded body mixin', async function (t) {
+    t = tspl(t, { plan: 1 })
+
+    const r = new Readable({
+      resume () {},
+      abort () {}
+    })
+    r.setEncoding('utf8')
+    r.push(Buffer.from('hello'))
+
+    const text = r.text()
+    const error = new Error('kaboom')
+    r.destroy(error)
+
+    await t.rejects(text, error)
+  })
+
   test('.arrayBuffer()', async function (t) {
     t = tspl(t, { plan: 1 })
 
