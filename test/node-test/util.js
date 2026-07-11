@@ -2,7 +2,7 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
-const { Stream } = require('node:stream')
+const { Readable, Stream } = require('node:stream')
 const { EventEmitter } = require('node:events')
 
 const util = require('../../lib/core/util')
@@ -18,6 +18,21 @@ test('isStream', () => {
 
   const ee = new EventEmitter()
   assert.ok(util.isStream(ee) === false)
+})
+
+test('isDestroyed supports Node and duck-typed streams', () => {
+  assert.strictEqual(util.isDestroyed(null), false)
+  assert.strictEqual(util.isDestroyed(undefined), false)
+
+  const readable = new Readable({ read () {} })
+  assert.strictEqual(util.isDestroyed(readable), false)
+  readable.destroy()
+  assert.strictEqual(util.isDestroyed(readable), true)
+
+  const duck = new EventEmitter()
+  duck.pipe = () => {}
+  util.destroy(duck)
+  assert.strictEqual(util.isDestroyed(duck), true)
 })
 
 test('getServerName', () => {
