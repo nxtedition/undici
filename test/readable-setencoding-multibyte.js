@@ -2,6 +2,7 @@
 
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
+const { once } = require('node:events')
 const { createServer } = require('node:http')
 const { Client } = require('..')
 const BodyReadable = require('../lib/api/readable')
@@ -35,25 +36,26 @@ test('setEncoding(\'utf8\') handles 3-byte UTF-8 characters split across chunks'
     server.close()
   })
 
-  server.listen(0, async () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(client.destroy.bind(client))
+  server.listen(0)
+  await once(server, 'listening')
 
-    const { body } = await client.request({
-      path: '/',
-      method: 'GET'
-    })
-    body.setEncoding('utf8')
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(client.destroy.bind(client))
 
-    let result = ''
-    for await (const chunk of body) {
-      result += chunk
-    }
-
-    // Must not contain U+FFFD replacement characters
-    t.strictEqual(result.includes('\ufffd'), false, 'should not contain U+FFFD replacement characters')
-    t.strictEqual(result, text, 'decoded text should match original')
+  const { body } = await client.request({
+    path: '/',
+    method: 'GET'
   })
+  body.setEncoding('utf8')
+
+  let result = ''
+  for await (const chunk of body) {
+    result += chunk
+  }
+
+  // Must not contain U+FFFD replacement characters
+  t.strictEqual(result.includes('\ufffd'), false, 'should not contain U+FFFD replacement characters')
+  t.strictEqual(result, text, 'decoded text should match original')
 
   await t.completed
 })
