@@ -483,7 +483,7 @@ export namespace util {
 export interface TopLevelRequestOptions<TOpaque = null>
   extends Omit<Dispatcher.RequestOptions<TOpaque>, 'origin' | 'path' | 'method'> {
   dispatcher?: Dispatcher
-  /** Replaces the path contained in the URL. */
+  /** Request path to use with an origin-only URL (without a path, query, or fragment). */
   path?: string
   method?: string
   /** Unsupported; use dispatcher. */

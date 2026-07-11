@@ -165,7 +165,7 @@ async function types () {
   setGlobalDispatcher(customDispatcher)
   getGlobalDispatcher() satisfies Dispatcher
 
-  await request('http://localhost/path', {
+  await request('http://localhost', {
     path: '/replacement',
     method: 'PUT',
     dispatcher: pool,
