@@ -5,6 +5,10 @@ const assert = require('node:assert')
 const tls = require('node:tls')
 const buildConnector = require('../lib/core/connect')
 
+test('buildConnector accepts omitted options', () => {
+  assert.strictEqual(typeof buildConnector(), 'function')
+})
+
 // Regression test for the removed HTTP/2 support.
 //
 // This build only speaks HTTP/1.1. If the connector were to advertise `h2` in
