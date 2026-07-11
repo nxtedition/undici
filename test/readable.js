@@ -2,6 +2,7 @@
 
 const { tspl } = require('@matteo.collina/tspl')
 const { test, describe } = require('node:test')
+const { once } = require('node:events')
 const Readable = require('../lib/api/readable')
 
 describe('Readable', () => {
@@ -205,5 +206,29 @@ describe('Readable', () => {
     t.strictEqual(r.bodyUsed, true)
 
     t.strictEqual(text, 'hello world')
+  })
+
+  // Regression: for a body that has already emitted 'end' but was never
+  // disturbed, consumeEnd() completes synchronously and consumeFinish() nulls
+  // consume.stream. consumeStart() must return immediately instead of falling
+  // through to resume()/read() on that null stream.
+  test('consume on an already-ended, undisturbed empty body resolves', async function (t) {
+    t = tspl(t, { plan: 1 })
+
+    function resume () {
+    }
+    function abort () {
+    }
+    const r = new Readable({ resume, abort })
+
+    r.push(null)
+    r.resume()
+    await once(r, 'end')
+
+    // endEmitted is true while the stream is not disturbed, so consume() reaches
+    // the synchronous completion path in consumeStart().
+    const text = await r.text()
+
+    t.strictEqual(text, '')
   })
 })

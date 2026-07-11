@@ -861,3 +861,85 @@ test('pool destroy fails queued requests', async (t) => {
   })
   await t.completed
 })
+
+// Regression: PoolBase[kOnDrain] used to be a closure that read `this` to mean
+// the client that drained. That works for the 'drain' event (Node binds
+// this=client), but kAddClient also calls it directly with this=pool. In that
+// path `this.dispatch` re-entered the pool, `this[kNeedDrain]` clobbered the
+// pool's own flag, and `!this[kNeedDrain] && pool[kNeedDrain]` collapsed to
+// `!pool[kNeedDrain] && pool[kNeedDrain]` (always false) so the pool 'drain'
+// event was never emitted from that path. Reproduced by dropping a client via
+// connectionError (which leaves the pool backed up) and dispatching again,
+// which adds a replacement client and triggers the kAddClient drain path.
+test('pool emits drain after a dropped client is replaced while backed up', async (t) => {
+  t = tspl(t, { plan: 4 })
+
+  const seen = []
+  let total = 0
+  let writeMore = false
+
+  class FakeClient extends EventEmitter {
+    constructor () {
+      super()
+      this.id = total++
+      this.destroyed = false
+    }
+
+    dispatch (opts, handler) {
+      seen.push({ client: this, id: this.id, handler })
+      return writeMore
+    }
+
+    close (cb) {
+      if (cb) cb(null, null)
+      return Promise.resolve()
+    }
+
+    destroy () {
+      this.destroyed = true
+      return Promise.resolve()
+    }
+  }
+
+  const noopHandler = {
+    onError (err) {
+      throw err
+    }
+  }
+
+  const pool = new Pool('http://notahost', {
+    connections: 1,
+    factory: () => new FakeClient()
+  })
+  after(() => pool.destroy())
+
+  // Saturate c0, then queue a second request at the pool level so the pool is
+  // backed up (pool[kNeedDrain] === true).
+  pool.dispatch({}, noopHandler) // -> c0 (busy: dispatch returns false)
+  pool.dispatch({}, noopHandler) // -> queued (no free client, at connection limit)
+
+  t.strictEqual(seen.length, 1, 'the second request is queued, not dispatched')
+
+  // Drop c0 via a connectionError. Pool splices it out without recomputing its
+  // needDrain flag, so the pool stays backed up with an empty client list.
+  const c0 = seen[0].client
+  c0.emit('connectionError', new URL('http://notahost'), [c0], new Error('boom'))
+
+  // Allow new clients to accept work and watch for the pool 'drain'.
+  writeMore = true
+  let drained = false
+  pool.on('drain', () => { drained = true })
+
+  // Creates a replacement client and calls kAddClient while pool[kNeedDrain] is
+  // still true -> schedules the kOnDrain microtask that flushes the queue.
+  pool.dispatch({}, noopHandler) // -> c1
+
+  // Flush the drain microtask, then the macrotask phase.
+  await new Promise((resolve) => setImmediate(resolve))
+
+  t.strictEqual(drained, true, 'pool emits drain after flushing its queue via the replacement client')
+  t.strictEqual(seen.length, 3, 'the queued request was dispatched')
+  t.strictEqual(seen[2].id, 1, 'the queued request ran on the replacement client')
+
+  await t.completed
+})
