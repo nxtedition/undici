@@ -1,10 +1,12 @@
 'use strict'
 
+const assert = require('node:assert/strict')
+const { Blob } = require('node:buffer')
+const { Readable } = require('node:stream')
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { createServer } = require('node:http')
 const { once } = require('node:events')
-const { Blob } = require('node:buffer')
 const { Client, errors } = require('..')
 
 // Race a promise against a timeout so a regression (a wedged/never-settling
@@ -56,71 +58,6 @@ test('FormData body rejects gracefully without wedging the client', async (t) =>
   )
   t.strictEqual(statusCode, 200)
   t.strictEqual(await body.text(), 'ok')
-})
-
-// Regression for the writeBlob() pre-try assertion.
-//
-// writeBlob() is async and is called without await and without a .catch().
-// Its `assert(contentLength === body.size)` used to sit *before* the try block,
-// so when it failed the rejected promise was unobserved — an unhandled
-// rejection that can terminate the process — instead of being routed through
-// abort(err)/onError. A Blob subclass that exposes arrayBuffer() but not
-// stream() (so it takes the writeBlob path rather than writeIterable), with a
-// missing size and explicit content-length, must reject with the structured
-// content-length mismatch error.
-test('Blob subclass without stream() and mismatched size rejects gracefully', async (t) => {
-  t = tspl(t, { plan: 2 })
-
-  const server = createServer((req, res) => {
-    res.end('ok')
-  })
-  after(() => server.close())
-
-  server.listen(0)
-  await once(server, 'listening')
-
-  const client = new Client(`http://localhost:${server.address().port}`)
-  after(() => client.close())
-
-  class ArrayBufferOnlyBlob extends Blob {
-    // No `size` (so bodyLength() is null and contentLength comes from the
-    // header below) and no stream() (so writeBlob handles it).
-    get size () {
-      return undefined
-    }
-
-    get stream () {
-      return undefined
-    }
-
-    async arrayBuffer () {
-      return new TextEncoder().encode('hello').buffer
-    }
-  }
-  const blob = new ArrayBufferOnlyBlob(['hello'], { type: 'text/plain' })
-
-  await t.rejects(
-    withTimeout(
-      client.request({
-        path: '/',
-        method: 'POST',
-        body: blob,
-        headers: { 'content-length': '5' }
-      }),
-      10000,
-      'Blob request neither resolved nor rejected (unhandled rejection?)'
-    ),
-    errors.RequestContentLengthMismatchError
-  )
-
-  // The client must remain usable afterwards.
-  const { statusCode, body } = await withTimeout(
-    client.request({ path: '/', method: 'GET' }),
-    10000,
-    'client wedged after blob-like body'
-  )
-  t.strictEqual(statusCode, 200)
-  await body.dump()
 })
 
 test('Blob subclass stream() errors reject gracefully without wedging the client', async (t) => {
@@ -215,4 +152,372 @@ test('tag-spoofed Blob bodies cannot inject headers', async (t) => {
   await new Promise(resolve => setImmediate(resolve))
   t.strictEqual(requests, 0, 'no request reaches the server')
   t.strictEqual(connections, 0, 'invalid bodies are rejected before connecting')
+})
+
+for (const accessor of ['size', 'type', 'stream']) {
+  test(`throwing Blob ${accessor} accessor rejects before queueing`, async (t) => {
+    const server = createServer((req, res) => {
+      res.end('ok')
+    })
+    let connections = 0
+    server.on('connection', () => { connections++ })
+    await new Promise((resolve) => server.listen(0, resolve))
+
+    const client = new Client(`http://localhost:${server.address().port}`)
+    t.after(async () => {
+      await client.destroy()
+      server.closeAllConnections()
+      await new Promise((resolve) => server.close(resolve))
+    })
+
+    const accessorError = new Error(`${accessor} accessor failed`)
+    class ThrowingBlob extends Blob {}
+    Object.defineProperty(ThrowingBlob.prototype, accessor, {
+      configurable: true,
+      get () {
+        throw accessorError
+      }
+    })
+
+    const rejection = await client.request({
+      path: '/',
+      method: 'POST',
+      body: new ThrowingBlob(['payload'])
+    }).then(
+      () => null,
+      (err) => err
+    )
+
+    assert.strictEqual(rejection, accessorError)
+
+    const { statusCode, body } = await withTimeout(
+      client.request({ path: '/', method: 'GET' }),
+      10000,
+      `client wedged after throwing Blob ${accessor} accessor`
+    )
+    assert.strictEqual(statusCode, 200)
+    assert.strictEqual(await body.text(), 'ok')
+    assert.strictEqual(connections, 1, 'failed Blob must not touch socket state')
+
+    await withTimeout(
+      client.close(),
+      10000,
+      `client close hung after throwing Blob ${accessor} accessor`
+    )
+  })
+}
+
+test('explicit content-type bypasses an unused Blob type accessor', async (t) => {
+  let requestBody
+  let requestHeaders
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) {
+      chunks.push(chunk)
+    }
+    requestBody = Buffer.concat(chunks).toString()
+    requestHeaders = req.headers
+    res.end('ok')
+  })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(async () => {
+    await client.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  class ThrowingTypeBlob extends Blob {
+    get type () {
+      throw new Error('unused Blob type must not be read')
+    }
+  }
+
+  const { body } = await client.request({
+    path: '/',
+    method: 'POST',
+    body: new ThrowingTypeBlob(['payload']),
+    headers: { 'content-type': 'application/custom' }
+  })
+
+  assert.strictEqual(await body.text(), 'ok')
+  assert.strictEqual(requestBody, 'payload')
+  assert.strictEqual(requestHeaders['content-type'], 'application/custom')
+})
+
+test('native Blob takes precedence over iterable and FormData lookalikes', async (t) => {
+  let requestBody
+  let requestHeaders
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) {
+      chunks.push(chunk)
+    }
+    requestBody = Buffer.concat(chunks).toString()
+    requestHeaders = req.headers
+    res.end('ok')
+  })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(async () => {
+    await client.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  class IterableBlob extends Blob {
+    get append () {
+      throw new Error('FormData properties must not be inspected for Blobs')
+    }
+
+    * [Symbol.iterator] () {
+      yield 'wrong iterable payload'
+    }
+  }
+
+  const { body } = await client.request({
+    path: '/',
+    method: 'POST',
+    body: new IterableBlob(['native Blob payload'], { type: 'text/plain' })
+  })
+
+  assert.strictEqual(await body.text(), 'ok')
+  assert.strictEqual(requestBody, 'native Blob payload')
+  assert.strictEqual(requestHeaders['content-type'], 'text/plain')
+  assert.strictEqual(requestHeaders['content-length'], '19')
+})
+
+test('stream body does not inspect a throwing Symbol.toStringTag accessor', async (t) => {
+  let requestBody
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) {
+      chunks.push(chunk)
+    }
+    requestBody = Buffer.concat(chunks).toString()
+    res.end('ok')
+  })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(async () => {
+    await client.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  const bodyStream = Readable.from(['stream body'])
+  Object.defineProperty(bodyStream, Symbol.toStringTag, {
+    configurable: true,
+    get () {
+      throw new Error('Symbol.toStringTag must not be read for streams')
+    }
+  })
+
+  const { body } = await client.request({
+    path: '/',
+    method: 'POST',
+    body: bodyStream
+  })
+
+  assert.strictEqual(await body.text(), 'ok')
+  assert.strictEqual(requestBody, 'stream body')
+})
+
+test('iterable body keeps iterable semantics with a Blob-like tag', async (t) => {
+  let requestBody
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) {
+      chunks.push(chunk)
+    }
+    requestBody = Buffer.concat(chunks).toString()
+    res.end('ok')
+  })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(async () => {
+    await client.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  let streamReads = 0
+  const iterable = {
+    [Symbol.toStringTag]: 'Blob',
+    get stream () {
+      streamReads++
+      throw new Error('Blob stream accessor must not be read for iterables')
+    },
+    * [Symbol.iterator] () {
+      yield 'iterable body'
+    }
+  }
+
+  const { body } = await client.request({
+    path: '/',
+    method: 'POST',
+    body: iterable
+  })
+
+  assert.strictEqual(await body.text(), 'ok')
+  assert.strictEqual(requestBody, 'iterable body')
+  assert.strictEqual(streamReads, 0)
+})
+
+test('Blob metadata is read once before dispatch', async (t) => {
+  let requestBody
+  let requestHeaders
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) {
+      chunks.push(chunk)
+    }
+    requestBody = Buffer.concat(chunks).toString()
+    requestHeaders = req.headers
+    res.end('ok')
+  })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(async () => {
+    await client.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  const reads = { size: 0, type: 0, stream: 0 }
+  class CountingBlob extends Blob {
+    get size () {
+      reads.size++
+      return super.size
+    }
+
+    get type () {
+      reads.type++
+      return super.type
+    }
+
+    get stream () {
+      reads.stream++
+      return super.stream
+    }
+  }
+
+  const { body } = await client.request({
+    path: '/',
+    method: 'POST',
+    body: new CountingBlob(['hello'], { type: 'text/plain' })
+  })
+
+  assert.strictEqual(await body.text(), 'ok')
+  assert.deepStrictEqual(reads, { size: 1, type: 1, stream: 1 })
+  assert.strictEqual(requestBody, 'hello')
+  assert.strictEqual(requestHeaders['content-type'], 'text/plain')
+  assert.strictEqual(requestHeaders['content-length'], '5')
+  assert.strictEqual(requestHeaders['transfer-encoding'], undefined)
+
+  await client.close()
+})
+
+test('alternating Blob type getter cannot inject a second value', async (t) => {
+  let requestHeaders
+  const server = createServer((req, res) => {
+    requestHeaders = req.headers
+    req.resume()
+    res.end('ok')
+  })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(async () => {
+    await client.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  let typeReads = 0
+  class AlternatingTypeBlob extends Blob {
+    get type () {
+      typeReads++
+      return typeReads === 1
+        ? 'text/plain'
+        : 'text/plain\r\nx-injected-via-second-read: yes'
+    }
+  }
+
+  const { body } = await client.request({
+    path: '/',
+    method: 'POST',
+    body: new AlternatingTypeBlob(['payload'])
+  })
+
+  assert.strictEqual(await body.text(), 'ok')
+  assert.strictEqual(typeReads, 1)
+  assert.strictEqual(requestHeaders['content-type'], 'text/plain')
+  assert.strictEqual(requestHeaders['x-injected-via-second-read'], undefined)
+})
+
+test('Blob subclass metadata cannot inject headers', async (t) => {
+  let requests = 0
+  let connections = 0
+  const server = createServer((req, res) => {
+    requests++
+    res.end('unexpected')
+  })
+  server.on('connection', () => { connections++ })
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(async () => {
+    await client.destroy()
+    server.closeAllConnections()
+    await new Promise((resolve) => server.close(resolve))
+  })
+
+  class InvalidSizeBlob extends Blob {
+    get size () {
+      return '1\r\nx-injected-via-size: yes'
+    }
+  }
+
+  class InvalidTypeBlob extends Blob {
+    get type () {
+      return 'text/plain\r\nx-injected-via-type: yes'
+    }
+  }
+
+  let proxyReads = 0
+  class ProxyTypeBlob extends Blob {
+    get type () {
+      return new Proxy(['text/plain'], {
+        get (target, property, receiver) {
+          if (property === '0' && ++proxyReads === 3) {
+            return 'text/plain\r\nx-injected-via-proxy: yes'
+          }
+          return Reflect.get(target, property, receiver)
+        }
+      })
+    }
+  }
+
+  await assert.rejects(
+    client.request({ path: '/', method: 'POST', body: new InvalidSizeBlob(['x']) }),
+    errors.InvalidArgumentError
+  )
+  await assert.rejects(
+    client.request({ path: '/', method: 'POST', body: new InvalidTypeBlob(['x']) }),
+    errors.InvalidArgumentError
+  )
+  await assert.rejects(
+    client.request({ path: '/', method: 'POST', body: new ProxyTypeBlob(['x']) }),
+    errors.InvalidArgumentError
+  )
+
+  await new Promise(resolve => setImmediate(resolve))
+  assert.strictEqual(requests, 0)
+  assert.strictEqual(connections, 0)
 })
