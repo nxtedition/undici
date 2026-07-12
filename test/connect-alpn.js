@@ -2,11 +2,36 @@
 
 const { test } = require('node:test')
 const assert = require('node:assert')
+const net = require('node:net')
 const tls = require('node:tls')
 const buildConnector = require('../lib/core/connect')
 
 test('buildConnector accepts omitted options', () => {
   assert.strictEqual(typeof buildConnector(), 'function')
+})
+
+test('buildConnector returns its socket and reports null on callback errors', async (t) => {
+  const connectError = Object.assign(new Error('connect failed'), { code: 'ECONNREFUSED' })
+  const originalConnect = net.connect
+  net.connect = () => {
+    const socket = new net.Socket()
+    queueMicrotask(() => socket.emit('error', connectError))
+    return socket
+  }
+  t.after(() => { net.connect = originalConnect })
+
+  const connect = buildConnector({ timeout: 0 })
+  let socket
+  await new Promise(resolve => {
+    socket = connect({ hostname: 'localhost', protocol: 'http:', port: 80 }, (error, result) => {
+      assert.strictEqual(error, connectError)
+      assert.strictEqual(result, null)
+      resolve()
+    })
+  })
+
+  assert.ok(socket instanceof net.Socket)
+  socket.destroy()
 })
 
 // Regression test for the removed HTTP/2 support.

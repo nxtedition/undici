@@ -2044,6 +2044,39 @@ test('async iterator empty chunk continues', async (t) => {
   await t.completed
 })
 
+test('iterator writes ArrayBuffer chunks', async (t) => {
+  t = tspl(t, { plan: 3 })
+  const expected = Uint8Array.from([0, 1, 255])
+  const server = createServer((req, res) => {
+    const chunks = []
+
+    req
+      .on('data', chunk => chunks.push(chunk))
+      .on('end', () => {
+        t.deepStrictEqual(Buffer.concat(chunks), Buffer.from(expected))
+        res.end()
+      })
+  })
+  after(() => server.close())
+
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'POST',
+      body: [expected.buffer]
+    }, (err, { statusCode, body }) => {
+      t.ifError(err)
+      t.strictEqual(statusCode, 200)
+      body.resume()
+    })
+  })
+
+  await t.completed
+})
+
 test('async iterator error from server destroys early', async (t) => {
   t = tspl(t, { plan: 3 })
   const server = createServer((req, res) => {
