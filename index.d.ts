@@ -299,11 +299,11 @@ export class Readable extends NodeReadable {
   bytes (): Promise<Uint8Array>
   arrayBuffer (): Promise<ArrayBuffer>
   formData (): Promise<never>
-  dump (options?: { limit?: number, signal?: AbortSignal | AbortSignalLike } | null): Promise<null>
+  dump (options?: { limit?: number, signal?: AbortSignal | AbortSignalLike } | null): Promise<void>
   setEncoding (encoding: BufferEncoding): this
 }
 
-export function buildConnector (options?: buildConnector.BuildOptions): buildConnector.Connector
+export function buildConnector (options?: buildConnector.BuildOptions): buildConnector.BuiltConnector
 
 export namespace buildConnector {
   type BuildOptions = Partial<ConnectionOptions> &
@@ -327,10 +327,14 @@ export namespace buildConnector {
     httpSocket?: Socket
   }
 
-  type Callback = (error: unknown, socket?: Socket | TLSSocket) => void
+  type Callback = (...args: [error: null, socket: Socket | TLSSocket] | [error: Error, socket: null]) => void
 
   interface Connector {
-    (options: Options, callback: Callback): Socket | TLSSocket | void
+    (options: Options, callback: Callback): void
+  }
+
+  interface BuiltConnector {
+    (options: Options, callback: Callback): Socket | TLSSocket
   }
 }
 

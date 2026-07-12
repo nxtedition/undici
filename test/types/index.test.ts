@@ -22,7 +22,7 @@ async function types () {
     socketPath: '/tmp/undici.sock',
     connect (options, callback) {
       options.socketPath?.toUpperCase()
-      callback(new Error('fixture'))
+      callback(new Error('fixture'), null)
     },
     allowH2: false
   })
@@ -59,6 +59,7 @@ async function types () {
     body: (async function * () {
       yield 'hello'
       yield Buffer.from(' world')
+      yield new ArrayBuffer(0)
     })(),
     upgrade: null,
     typeOfService: 16
@@ -67,6 +68,7 @@ async function types () {
   client.dispatch({
     path: '/',
     method: 'GET',
+    headers: [['x-test', 'yes']] as const,
     upgrade: 'websocket'
   }, {
     onConnect (abort) {
@@ -102,8 +104,8 @@ async function types () {
   response.context satisfies unknown
   response.headers.date?.toString()
   response.trailers.date?.toString()
-  await response.body.dump({ limit: 1024, signal: AbortSignal.timeout(10) }) satisfies null
-  await response.body.dump({ signal: eventTargetSignal }) satisfies null
+  await response.body.dump({ limit: 1024, signal: AbortSignal.timeout(10) }) satisfies void
+  await response.body.dump({ signal: eventTargetSignal }) satisfies void
   await response.body.text() satisfies string
   await response.body.json() satisfies unknown
   await response.body.blob() satisfies Blob
@@ -202,11 +204,14 @@ async function types () {
     rejectUnauthorized: false
   })
 
-  connector({ hostname: 'localhost', protocol: 'http:', socketPath: '/tmp/undici.sock' }, (error, socket) => {
+  const connectingSocket = connector({ hostname: 'localhost', protocol: 'http:', socketPath: '/tmp/undici.sock' }, (error, socket) => {
     if (error === null && socket) {
       socket.destroy()
+    } else {
+      error?.message satisfies string | undefined
     }
   })
+  connectingSocket.destroy()
 
   util.headerNameToString(Buffer.from('Content-Type')) satisfies string
   const parsed = util.parseHeaders([Buffer.from('x-test'), Buffer.from('yes')], { existing: 'value' })
@@ -219,7 +224,7 @@ async function types () {
     }
   })
   body.setEncoding('utf8')
-  await body.dump({ limit: 1 }) satisfies null
+  await body.dump({ limit: 1 }) satisfies void
 
   new errors.ConnectTimeoutError().code satisfies 'UND_ERR_CONNECT_TIMEOUT'
   new errors.AbortError().name satisfies 'AbortError'

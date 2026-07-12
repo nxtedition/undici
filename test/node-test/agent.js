@@ -585,3 +585,21 @@ test('the dispatcher is truly global', t => {
   assert.ok(require.resolve('../../index.js') in require.cache)
   assert.strictEqual(agent, undiciFresh.getGlobalDispatcher())
 })
+
+test('the global dispatcher is isolated from previous API generations', () => {
+  const legacySlot = Symbol.for('nxtedition.globalDispatcher.1')
+  const hadLegacyDispatcher = Object.hasOwn(globalThis, legacySlot)
+  const previousLegacyDispatcher = globalThis[legacySlot]
+  const legacyDispatcher = { dispatch () {} }
+
+  try {
+    globalThis[legacySlot] = legacyDispatcher
+    assert.notStrictEqual(getGlobalDispatcher(), legacyDispatcher)
+  } finally {
+    if (hadLegacyDispatcher) {
+      globalThis[legacySlot] = previousLegacyDispatcher
+    } else {
+      delete globalThis[legacySlot]
+    }
+  }
+})

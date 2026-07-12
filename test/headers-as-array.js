@@ -32,6 +32,30 @@ test('handle headers as array', async (t) => {
   await t.completed
 })
 
+test('handle headers as pair array', async (t) => {
+  t = tspl(t, { plan: 2 })
+  const headers = [['a', '1'], ['b', ['2', '3']]]
+
+  const server = createServer((req, res) => {
+    t.strictEqual(req.headers.a, '1')
+    t.strictEqual(req.headers.b, '2, 3')
+    res.end()
+  })
+  after(() => server.close())
+  server.listen(0, () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.close())
+
+    client.request({
+      path: '/',
+      method: 'GET',
+      headers
+    }, () => {})
+  })
+
+  await t.completed
+})
+
 test('handle multi-valued headers as array', async (t) => {
   t = tspl(t, { plan: 4 })
   const headers = ['a', '1', 'b', '2', 'c', '3', 'd', '4', 'd', '5']
