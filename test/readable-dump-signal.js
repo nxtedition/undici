@@ -19,7 +19,25 @@ test('dump supports native AbortSignals', async () => {
 
   queueMicrotask(() => body.push(null))
 
-  assert.strictEqual(await dumped, null)
+  assert.strictEqual(await dumped, undefined)
+})
+
+test('dump resolves undefined without a signal', async () => {
+  const body = createBody()
+  const dumped = body.dump()
+
+  queueMicrotask(() => body.push(null))
+
+  assert.strictEqual(await dumped, undefined)
+})
+
+test('dump resolves undefined after the body has already closed', async () => {
+  const body = createBody()
+  body.resume()
+  body.push(null)
+  await new Promise(resolve => body.once('close', resolve))
+
+  assert.strictEqual(await body.dump(), undefined)
 })
 
 test('dump rejects a pre-aborted native AbortSignal', async () => {
@@ -95,6 +113,6 @@ test('dump disposes structural AbortSignal listener on close', async () => {
 
   queueMicrotask(() => body.push(null))
 
-  assert.strictEqual(await dumped, null)
+  assert.strictEqual(await dumped, undefined)
   assert.strictEqual(removals, 1)
 })
