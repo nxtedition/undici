@@ -1,0 +1,3 @@
+# AI agent private workspaces (.codex-private, .claude-private, ...)
+.claude
+**/.*-private

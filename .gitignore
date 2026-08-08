@@ -85,3 +85,6 @@ fuzz-results-*.json
 test/request-timeout.10mb.bin
 
 .claude
+
+# AI agent private workspaces (.codex-private, .claude-private, ...)
+.*-private/
