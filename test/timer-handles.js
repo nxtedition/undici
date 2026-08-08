@@ -73,3 +73,45 @@ test('Sinon fake timers expose Node handles and support FastTimer', () => {
     clock.uninstall()
   }
 })
+
+test('timer handles without callable refresh()/unref() keep one tick scheduled', () => {
+  // Some fake-timer polyfills return a bare handle or non-callable lifecycle
+  // properties. Neither path may assume the Node timer lifecycle.
+  const nativeSetTimeout = globalThis.setTimeout
+  const nativeClearTimeout = globalThis.clearTimeout
+  const handles = new Map()
+  let nextId = 1
+
+  globalThis.setTimeout = (callback, delay, ...args) => {
+    const id = nextId++
+    const handle = id === 1 ? id : { id, refresh: true, unref: true }
+    handles.set(handle, nativeSetTimeout(callback, delay, ...args))
+    return handle
+  }
+  globalThis.clearTimeout = handle => {
+    if (handles.has(handle)) {
+      nativeClearTimeout(handles.get(handle))
+      handles.delete(handle)
+      return
+    }
+    nativeClearTimeout(handle)
+  }
+
+  try {
+    const timer = timers.setFastTimeout(() => {}, 2_000)
+    const initialHandle = nextId - 1
+
+    assert.strictEqual(handles.size, 1)
+    timers.tick()
+    assert.strictEqual(handles.size, 1)
+    assert.strictEqual(handles.has(initialHandle), false)
+    timers.clearTimeout(timer)
+  } finally {
+    timers.reset()
+    for (const handle of handles.values()) {
+      nativeClearTimeout(handle)
+    }
+    globalThis.setTimeout = nativeSetTimeout
+    globalThis.clearTimeout = nativeClearTimeout
+  }
+})
