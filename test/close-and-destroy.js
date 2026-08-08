@@ -369,3 +369,43 @@ test('should not close socket when no maxRequestsPerClient is provided', async (
 
   await t.completed
 })
+
+// `await using client = new Client(...)` desugars into the calls made below.
+// The syntax itself is avoided here because eslint's parser cannot handle it yet.
+test('asyncDispose destroys the dispatcher', async (t) => {
+  t = tspl(t, { plan: 3 })
+
+  const server = createServer((req, res) => {
+    res.end('hello')
+  })
+  after(() => server.close())
+
+  await new Promise(resolve => server.listen(0, resolve))
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.destroy())
+
+  const { statusCode, body } = await client.request({ path: '/', method: 'GET' })
+  t.strictEqual(statusCode, 200)
+  await body.dump()
+
+  t.strictEqual(client.destroyed, false)
+
+  await client[Symbol.asyncDispose]()
+
+  t.strictEqual(client.destroyed, true)
+
+  await t.completed
+})
+
+test('asyncDispose is idempotent for an already destroyed dispatcher', async (t) => {
+  t = tspl(t, { plan: 1 })
+
+  const client = new Client('http://localhost:1')
+  await client.destroy()
+  await client[Symbol.asyncDispose]()
+
+  t.ok(true, 'disposed without error')
+
+  await t.completed
+})
