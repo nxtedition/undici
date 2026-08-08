@@ -74,7 +74,7 @@ test('Sinon fake timers expose Node handles and support FastTimer', () => {
   }
 })
 
-test('timer handles without refresh()/unref() keep the tick loop alive', () => {
+test('timer handles without refresh()/unref() keep one tick scheduled', () => {
   // Some fake-timer polyfills return a bare handle. Neither creating the
   // backing timer nor rescheduling it may assume the Node timer lifecycle.
   const nativeSetTimeout = globalThis.setTimeout
@@ -98,10 +98,12 @@ test('timer handles without refresh()/unref() keep the tick loop alive', () => {
 
   try {
     const timer = timers.setFastTimeout(() => {}, 2_000)
-    // Two ticks: the first creates the backing timer, the second takes the
-    // reschedule path that would call refresh() on a native handle.
+    const initialHandle = nextId - 1
+
+    assert.strictEqual(handles.size, 1)
     timers.tick()
-    timers.tick()
+    assert.strictEqual(handles.size, 1)
+    assert.strictEqual(handles.has(initialHandle), false)
     timers.clearTimeout(timer)
   } finally {
     timers.reset()
