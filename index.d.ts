@@ -74,7 +74,7 @@ export class Dispatcher extends EventEmitter<Dispatcher.EventMap> {
   destroy (reason: unknown, callback: Dispatcher.CompletionCallback): void
 
   /** Destroys the dispatcher, so it can be used with `await using`. */
-  [Symbol.asyncDispose] (): Promise<null>
+  [Symbol.asyncDispose] (): Promise<void>
 }
 
 export namespace Dispatcher {
