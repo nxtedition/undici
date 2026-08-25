@@ -1,6 +1,8 @@
 'use strict'
 
 const { tspl } = require('@matteo.collina/tspl')
+const assert = require('node:assert/strict')
+const { spawnSync } = require('node:child_process')
 const { test, after } = require('node:test')
 const { once } = require('node:events')
 const { createServer } = require('node:http')
@@ -62,4 +64,46 @@ test('assigning to the legacy alias absorbs entries instead of replacing the reg
   t.strictEqual(shared.has(socket), false)
 
   await t.completed
+})
+
+test('a non-configurable legacy Map is reused without redefining it', () => {
+  const packagePath = require.resolve('..')
+  const result = spawnSync(process.execPath, ['--eval', `
+    const assert = require('node:assert/strict')
+    const legacy = new Map([[{}, { hostname: 'legacy.test' }]])
+    Object.defineProperty(globalThis, '__undici_sockets', {
+      configurable: false,
+      value: legacy
+    })
+
+    require(${JSON.stringify(packagePath)})
+
+    const sockets = globalThis[Symbol.for('@nxtedition/undici/sockets')]
+    assert.strictEqual(sockets, legacy)
+    assert.strictEqual(globalThis.__undici_sockets, legacy)
+  `], { encoding: 'utf8', timeout: 5000 })
+
+  assert.ifError(result.error)
+  assert.strictEqual(result.status, 0, result.stderr)
+})
+
+test('an incompatible non-configurable legacy property does not prevent import', () => {
+  const packagePath = require.resolve('..')
+  const result = spawnSync(process.execPath, ['--eval', `
+    const assert = require('node:assert/strict')
+    const collision = Object.freeze({ unrelated: true })
+    Object.defineProperty(globalThis, '__undici_sockets', {
+      configurable: false,
+      value: collision
+    })
+
+    require(${JSON.stringify(packagePath)})
+
+    const sockets = globalThis[Symbol.for('@nxtedition/undici/sockets')]
+    assert.ok(sockets instanceof Map)
+    assert.strictEqual(globalThis.__undici_sockets, collision)
+  `], { encoding: 'utf8', timeout: 5000 })
+
+  assert.ifError(result.error)
+  assert.strictEqual(result.status, 0, result.stderr)
 })
