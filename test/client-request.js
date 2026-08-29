@@ -1092,6 +1092,43 @@ test('request multibyte text with setEncoding', async (t) => {
   await t.completed
 })
 
+test('#5611 - setEncoding() then .text() keeps a body received in several chunks', async (t) => {
+  t = tspl(t, { plan: 2 })
+
+  const text = 'abc傳def'
+  const buf = Buffer.from(text)
+  const sendRest = new EE.EventEmitter()
+
+  const server = createServer(async (req, res) => {
+    res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+    res.write(buf.subarray(0, 4))
+    await EE.once(sendRest, 'go')
+    res.end(buf.subarray(4))
+  })
+  after(() => {
+    server.closeAllConnections?.()
+    server.close()
+  })
+
+  server.listen(0, async () => {
+    const client = new Client(`http://localhost:${server.address().port}`)
+    after(() => client.destroy())
+
+    const { body } = await client.request({ path: '/', method: 'GET' })
+    body.setEncoding('utf8')
+
+    const completed = EE.once(client, 'drain')
+    sendRest.emit('go')
+    await completed
+
+    const result = await body.text()
+    t.strictEqual(result, text)
+    t.strictEqual(Buffer.byteLength(result), buf.length)
+  })
+
+  await t.completed
+})
+
 test('#3736 - Aborted Response (without consuming body)', async (t) => {
   const plan = tspl(t, { plan: 1 })
 
