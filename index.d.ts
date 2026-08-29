@@ -328,6 +328,8 @@ export namespace buildConnector {
     localAddress?: string | null
     socketPath?: string | null
     httpSocket?: Socket
+    /** Aborted when no queued request still depends on this connection attempt. */
+    signal?: AbortSignal
   }
 
   type Callback = (...args: [error: null, socket: Socket | TLSSocket] | [error: Error, socket: null]) => void
