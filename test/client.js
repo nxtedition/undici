@@ -4,7 +4,8 @@ const assert = require('node:assert')
 const { tspl } = require('@matteo.collina/tspl')
 const { readFileSync, createReadStream } = require('node:fs')
 const { createServer } = require('node:http')
-const { createServer: createNetServer } = require('node:net')
+const net = require('node:net')
+const { createServer: createNetServer } = net
 const { Readable } = require('node:stream')
 const { test, after } = require('node:test')
 const { Client, errors } = require('..')
@@ -78,6 +79,61 @@ test('passes lookup from connect options to built connector', async (t) => {
   assert.strictEqual(statusCode, 200)
   assert.strictEqual(await body.text(), 'lookup ok')
   assert.strictEqual(lookupCalled, true)
+})
+
+test('preserves the request servername on HTTP sockets connecting to an IP', async (t) => {
+  const server = createServer({ joinDuplicateHeaders: true }, (req, res) => {
+    res.end('logical host')
+  })
+  t.after(() => server.close())
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+
+  const originalConnect = net.connect
+  let connectOptions
+  net.connect = function (...args) {
+    connectOptions = args[0]
+    return originalConnect.apply(this, args)
+  }
+  t.after(() => { net.connect = originalConnect })
+
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
+  t.after(() => client.close())
+
+  const { statusCode, body } = await client.request({
+    path: '/',
+    method: 'GET',
+    servername: 'logical.test'
+  })
+
+  assert.strictEqual(statusCode, 200)
+  assert.strictEqual(await body.text(), 'logical host')
+  assert.strictEqual(connectOptions.host, 'logical.test')
+  assert.strictEqual(typeof connectOptions.lookup, 'function')
+
+  await new Promise((resolve, reject) => {
+    connectOptions.lookup(connectOptions.host, {}, (err, address, family) => {
+      if (err) {
+        reject(err)
+        return
+      }
+
+      assert.strictEqual(address, '127.0.0.1')
+      assert.strictEqual(family, 4)
+      resolve()
+    })
+  })
+
+  await new Promise((resolve, reject) => {
+    connectOptions.lookup(connectOptions.host, { all: true }, (err, addresses) => {
+      if (err) {
+        reject(err)
+        return
+      }
+
+      assert.deepStrictEqual(addresses, [{ address: '127.0.0.1', family: 4 }])
+      resolve()
+    })
+  })
 })
 
 test('basic get', async (t) => {
