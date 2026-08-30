@@ -229,4 +229,6 @@ test('refreshes wasm input view after reallocating parser buffer', async (testCo
   const largeResponse = await request()
   t.strictEqual(largeResponse.statusCode, 200)
   t.strictEqual(largeResponse.body, largeBody.toString())
+
+  await t.completed
 })
