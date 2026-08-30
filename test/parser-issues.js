@@ -185,9 +185,24 @@ test('refreshes wasm input view after reallocating parser buffer', async (testCo
 
   const server = resources.use(net.createServer(socket => {
     let responseIndex = 0
+    let requestBuffer = ''
 
-    socket.on('data', () => {
-      socket.write(responses[responseIndex++])
+    socket.setEncoding('latin1')
+    socket.on('data', chunk => {
+      requestBuffer += chunk
+
+      let requestEnd
+      while ((requestEnd = requestBuffer.indexOf('\r\n\r\n')) !== -1) {
+        requestBuffer = requestBuffer.slice(requestEnd + 4)
+
+        const response = responses[responseIndex++]
+        if (response === undefined) {
+          t.fail('received an unexpected request')
+          return
+        }
+
+        socket.write(response)
+      }
     })
   }))
 
