@@ -63,6 +63,10 @@ test('truncated chunked responses terminated by EOF error the response body', as
     path: '/'
   }, (err, { body } = {}) => {
     t.ifError(err)
+    if (err) {
+      return
+    }
+
     body
       .on('end', () => {
         t.fail('expected the truncated chunked body to fail')
@@ -110,10 +114,14 @@ test('https://github.com/mcollina/undici/issues/268', async (testContext) => {
     headersTimeout: 1e3
   }, (err, data) => {
     t.ifError(err)
+    if (err) {
+      return
+    }
+
+    data.body.on('error', () => {})
     data.body.resume()
     setTimeout(() => {
       t.ok(true, 'pass')
-      data.body.on('error', () => {})
     }, 2e3)
   })
 
@@ -163,6 +171,10 @@ test('split header field', async (testContext) => {
     path: '/'
   }, (err, data) => {
     t.ifError(err)
+    if (err) {
+      return
+    }
+
     t.equal(data.headers.asd, 'asd,asd')
     data.body.resume()
   })
@@ -190,6 +202,10 @@ test('split header value', async (testContext) => {
     path: '/'
   }, (err, data) => {
     t.ifError(err)
+    if (err) {
+      return
+    }
+
     t.equal(data.headers.asd, 'asd,asd')
     data.body.resume()
   })
