@@ -1,6 +1,6 @@
 'use strict'
 
-const { test, after } = require('node:test')
+const { test } = require('node:test')
 const { tspl } = require('@matteo.collina/tspl')
 const { Client } = require('../..')
 const { createServer } = require('node:http')
@@ -14,7 +14,7 @@ test('client does not hang when connector throws synchronously', async (t) => {
   const server = createServer({ joinDuplicateHeaders: true }, (req, res) => {
     res.end()
   })
-  after(closeServerAsPromise(server))
+  t.after(closeServerAsPromise(server))
 
   server.listen(0, () => {
     const client = new Client(`http://localhost:${server.address().port}`, {
@@ -22,7 +22,7 @@ test('client does not hang when connector throws synchronously', async (t) => {
         throw new Error('connector boom')
       }
     })
-    after(() => client.destroy())
+    t.after(() => client.destroy())
 
     client.request({ path: '/', method: 'GET' }, (err) => {
       p.ok(err instanceof Error)
@@ -45,7 +45,7 @@ test('client recovers after connector stops throwing', async (t) => {
     res.writeHead(200)
     res.end('ok')
   })
-  after(closeServerAsPromise(server))
+  t.after(closeServerAsPromise(server))
 
   server.listen(0, () => {
     let shouldThrow = true
@@ -57,11 +57,21 @@ test('client recovers after connector stops throwing', async (t) => {
 
         const net = require('node:net')
         const socket = net.connect(opts.port, opts.hostname)
-        socket.on('connect', () => cb(null, socket))
-        socket.on('error', (err) => cb(err, null))
+        let settled = false
+        const complete = (err, connectedSocket) => {
+          if (settled) {
+            return
+          }
+
+          settled = true
+          cb(err, connectedSocket)
+        }
+
+        socket.once('connect', () => complete(null, socket))
+        socket.once('error', (err) => complete(err, null))
       }
     })
-    after(() => client.destroy())
+    t.after(() => client.destroy())
 
     client.request({ path: '/', method: 'GET' }, (err) => {
       p.ok(err instanceof Error)
