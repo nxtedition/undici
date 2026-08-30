@@ -6,6 +6,22 @@ const net = require('node:net')
 const { test } = require('node:test')
 const { Client, errors } = require('..')
 
+function dispatchUpgrade (client, upgrade) {
+  return new Promise((resolve, reject) => {
+    client.dispatch({
+      path: '/',
+      method: 'GET',
+      upgrade
+    }, {
+      onConnect () {},
+      onUpgrade () {
+        resolve()
+      },
+      onError: reject
+    })
+  })
+}
+
 // Ported from nodejs/undici commit 77594f923cef4c27ee0bad365e7b4c44a199edae.
 test('upgrade values reject header injection characters', async (t) => {
   const client = new Client('http://127.0.0.1')
@@ -24,6 +40,14 @@ test('upgrade values reject header injection characters', async (t) => {
           method: 'GET',
           upgrade: protocol
         }),
+        {
+          name: 'InvalidArgumentError',
+          message: 'invalid upgrade header'
+        }
+      )
+
+      await assert.rejects(
+        dispatchUpgrade(client, protocol),
         {
           name: 'InvalidArgumentError',
           message: 'invalid upgrade header'
