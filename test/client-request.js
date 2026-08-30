@@ -133,7 +133,6 @@ test('request dump with abort signal', async (t) => {
       const ac = new AbortController()
       body.dump({ signal: ac.signal }).catch((err) => {
         t.strictEqual(err.name, 'AbortError')
-        server.close()
       })
       ac.abort()
     })
