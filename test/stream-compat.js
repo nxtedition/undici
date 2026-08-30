@@ -1,78 +1,122 @@
 'use strict'
 
 const { tspl } = require('@matteo.collina/tspl')
-const { test, after } = require('node:test')
+const { test } = require('node:test')
 const { Client } = require('..')
 const { createServer } = require('node:http')
+const { EventEmitter, once } = require('node:events')
 const { Readable } = require('node:stream')
-const EE = require('node:events')
+
+function closeServer (server) {
+  return new Promise((resolve, reject) => {
+    server.close((err) => {
+      if (err) {
+        reject(err)
+      } else {
+        resolve()
+      }
+    })
+    server.closeAllConnections()
+  })
+}
 
 test('stream body without destroy', async (t) => {
+  const ctx = t
   t = tspl(t, { plan: 2 })
 
   const server = createServer((req, res) => {
     res.end()
   })
-  after(() => server.close())
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
+  server.listen(0)
+  await once(server, 'listening')
 
-    const signal = new EE()
-    const body = new Readable({ read () {} })
-    body.destroy = undefined
-    body.on('error', (err) => {
-      t.ok(err)
-    })
-    client.request({
-      path: '/',
-      method: 'PUT',
-      signal,
-      body
-    }, (err, data) => {
-      t.ok(err)
-    })
-    signal.emit('abort')
+  const client = new Client(`http://localhost:${server.address().port}`)
+  ctx.after(async () => {
+    await client.destroy()
+    await closeServer(server)
   })
+
+  const signal = new EventEmitter()
+  const body = new Readable({ read () {} })
+  body.destroy = undefined
+  body.on('error', (err) => {
+    t.ok(err)
+  })
+  client.request({
+    path: '/',
+    method: 'PUT',
+    signal,
+    body
+  }, (err) => {
+    t.ok(err)
+  })
+  signal.emit('abort')
 
   await t.completed
 })
 
 test('IncomingMessage', async (t) => {
+  const ctx = t
   t = tspl(t, { plan: 2 })
 
   const server = createServer((req, res) => {
     res.end()
   })
-  after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
 
-  server.listen(0, () => {
-    const proxyClient = new Client(`http://localhost:${server.address().port}`)
-    after(() => proxyClient.destroy())
+  const proxyClient = new Client(`http://localhost:${server.address().port}`)
+  proxyClient.on('disconnect', () => {
+    if (!proxyClient.closed && !proxyClient.destroyed) {
+      t.fail('unexpected disconnect')
+    }
+  })
 
-    const proxy = createServer((req, res) => {
-      proxyClient.request({
-        path: '/',
-        method: 'PUT',
-        body: req
-      }, (err, data) => {
-        t.ifError(err)
-        data.body.pipe(res)
-      })
+  const proxy = createServer((req, res) => {
+    proxyClient.request({
+      path: '/',
+      method: 'PUT',
+      body: req
+    }, (err, data) => {
+      t.ifError(err)
+      if (err) {
+        res.destroy(err)
+        return
+      }
+
+      data.body.pipe(res)
     })
-    after(() => proxy.close())
+  })
+  proxy.listen(0)
+  await once(proxy, 'listening')
 
-    proxy.listen(0, () => {
-      const client = new Client(`http://localhost:${proxy.address().port}`)
-      after(() => client.destroy())
+  const client = new Client(`http://localhost:${proxy.address().port}`)
+  client.on('disconnect', () => {
+    if (!client.closed && !client.destroyed) {
+      t.fail('unexpected disconnect')
+    }
+  })
 
-      client.request({
-        path: '/',
-        method: 'PUT',
-        body: 'hello world'
-      }, (err, data) => {
-        t.ifError(err)
-      })
+  ctx.after(async () => {
+    await client.destroy()
+    await proxyClient.destroy()
+    await closeServer(proxy)
+    await closeServer(server)
+  })
+
+  await new Promise((resolve, reject) => {
+    client.request({
+      path: '/',
+      method: 'PUT',
+      body: 'hello world'
+    }, (err, data) => {
+      t.ifError(err)
+      if (err) {
+        reject(err)
+        return
+      }
+
+      data.body.dump().then(resolve, reject)
     })
   })
 
