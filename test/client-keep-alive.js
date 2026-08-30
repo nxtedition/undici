@@ -132,8 +132,10 @@ test('HEAD keep-alive header reuses socket when connection header is fragmented'
 
   const server = createServer((socket) => {
     connections++
+    socket.setNoDelay(true)
 
     let request = ''
+    let responses = Promise.resolve()
     socket.on('data', (chunk) => {
       request += chunk.toString()
 
@@ -141,16 +143,20 @@ test('HEAD keep-alive header reuses socket when connection header is fragmented'
         const endOfHeaders = request.indexOf('\r\n\r\n') + 4
         request = request.slice(endOfHeaders)
         requests++
+        const requestNumber = requests
 
-        socket.write('HTTP/1.1 200 OK\r\n')
-        socket.write('Content-Length: 0\r\n')
-        socket.write('Connection: keep-')
-        socket.write('alive\r\n')
-        socket.write('\r\n')
+        responses = responses.then(async () => {
+          socket.write('HTTP/1.1 200 OK\r\n')
+          socket.write('Content-Length: 0\r\n')
+          await new Promise((resolve) => socket.write('Connection: keep-', resolve))
+          await new Promise((resolve) => setImmediate(resolve))
+          socket.write('alive\r\n')
+          socket.write('\r\n')
 
-        if (requests === 2) {
-          socket.end()
-        }
+          if (requestNumber === 2) {
+            socket.end()
+          }
+        })
       }
     })
   })
@@ -159,8 +165,6 @@ test('HEAD keep-alive header reuses socket when connection header is fragmented'
 
   const client = new Client(`http://localhost:${server.address().port}`)
   after(() => client.destroy())
-
-  const disconnect = once(client, 'disconnect')
 
   const first = await client.request({
     path: '/',
@@ -178,7 +182,6 @@ test('HEAD keep-alive header reuses socket when connection header is fragmented'
   t.strictEqual(second.statusCode, 200)
   await second.body.text()
 
-  await disconnect
   t.strictEqual(connections, 1)
   t.strictEqual(requests, 2)
 
