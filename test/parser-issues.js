@@ -212,3 +212,71 @@ test('split header value', async (testContext) => {
 
   await t.completed
 })
+
+test('refreshes wasm input view after reallocating parser buffer', async (testContext) => {
+  const t = tspl(testContext, { plan: 4 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
+
+  const smallBody = Buffer.from('ok')
+  const largeBody = Buffer.alloc(8192, 'a')
+  const responses = [
+    Buffer.concat([
+      Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${smallBody.length}\r\n\r\n`),
+      smallBody
+    ]),
+    Buffer.concat([
+      Buffer.from(`HTTP/1.1 200 OK\r\nContent-Length: ${largeBody.length}\r\n\r\n`),
+      largeBody
+    ])
+  ]
+
+  const server = resources.use(net.createServer(socket => {
+    let responseIndex = 0
+    let requestBuffer = ''
+
+    socket.setEncoding('latin1')
+    socket.on('data', chunk => {
+      requestBuffer += chunk
+
+      let requestEnd
+      while ((requestEnd = requestBuffer.indexOf('\r\n\r\n')) !== -1) {
+        requestBuffer = requestBuffer.slice(requestEnd + 4)
+
+        const response = responses[responseIndex++]
+        if (response === undefined) {
+          t.fail('received an unexpected request')
+          return
+        }
+
+        socket.write(response)
+      }
+    })
+  }))
+
+  await new Promise(resolve => server.listen(0, resolve))
+
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+
+  async function request () {
+    const { statusCode, body } = await client.request({
+      method: 'GET',
+      path: '/'
+    })
+
+    return {
+      statusCode,
+      body: await body.text()
+    }
+  }
+
+  const smallResponse = await request()
+  t.strictEqual(smallResponse.statusCode, 200)
+  t.strictEqual(smallResponse.body, smallBody.toString())
+
+  const largeResponse = await request()
+  t.strictEqual(largeResponse.statusCode, 200)
+  t.strictEqual(largeResponse.body, largeBody.toString())
+
+  await t.completed
+})
