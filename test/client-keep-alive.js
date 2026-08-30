@@ -124,6 +124,70 @@ test('keep-alive header 1', async (t) => {
   await t.completed
 })
 
+test('HEAD keep-alive header reuses socket when connection header is fragmented', async (t) => {
+  t = tspl(t, { plan: 4 })
+
+  let connections = 0
+  let requests = 0
+
+  const server = createServer((socket) => {
+    connections++
+    socket.setNoDelay(true)
+
+    let request = ''
+    let responses = Promise.resolve()
+    socket.on('data', (chunk) => {
+      request += chunk.toString()
+
+      while (request.includes('\r\n\r\n')) {
+        const endOfHeaders = request.indexOf('\r\n\r\n') + 4
+        request = request.slice(endOfHeaders)
+        requests++
+        const requestNumber = requests
+
+        responses = responses.then(async () => {
+          socket.write('HTTP/1.1 200 OK\r\n')
+          socket.write('Content-Length: 0\r\n')
+          await new Promise((resolve) => socket.write('Connection: keep-', resolve))
+          await new Promise((resolve) => setImmediate(resolve))
+          socket.write('alive\r\n')
+          socket.write('\r\n')
+
+          if (requestNumber === 2) {
+            socket.end()
+          }
+        })
+      }
+    })
+  })
+  after(() => server.close())
+  await once(server.listen(0), 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.destroy())
+
+  const first = await client.request({
+    path: '/',
+    method: 'HEAD',
+    reset: false
+  })
+  t.strictEqual(first.statusCode, 200)
+  await first.body.text()
+
+  const second = await client.request({
+    path: '/',
+    method: 'HEAD',
+    reset: false
+  })
+  t.strictEqual(second.statusCode, 200)
+  await second.body.text()
+
+  t.strictEqual(connections, 1)
+  t.strictEqual(requests, 2)
+
+  await t.completed
+})
+
 test('keep-alive header no postfix', async (t) => {
   t = tspl(t, { plan: 2 })
 
