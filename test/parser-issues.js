@@ -1,9 +1,40 @@
 'use strict'
 
 const { tspl } = require('@matteo.collina/tspl')
-const { test, after } = require('node:test')
+const { once } = require('node:events')
+const { test } = require('node:test')
 const net = require('node:net')
 const { Client, errors } = require('..')
+
+function createTrackedServer (onConnection) {
+  const sockets = new Set()
+  const server = net.createServer(socket => {
+    sockets.add(socket)
+    socket.once('close', () => {
+      sockets.delete(socket)
+    })
+    onConnection(socket)
+  })
+
+  return {
+    server,
+    async [Symbol.asyncDispose] () {
+      for (const socket of sockets) {
+        socket.destroy()
+      }
+
+      if (server.listening) {
+        await server[Symbol.asyncDispose]()
+      }
+    }
+  }
+}
+
+async function listen (server) {
+  const listening = once(server, 'listening')
+  server.listen(0)
+  await listening
+}
 
 const truncatedChunkedResponse = Buffer.from(
   'HTTP/1.1 200 OK\r\n' +
@@ -14,18 +45,18 @@ const truncatedChunkedResponse = Buffer.from(
   'hel\r\n'
 )
 
-test('truncated chunked responses terminated by EOF error the response body', async (t) => {
-  t = tspl(t, { plan: 3 })
+test('truncated chunked responses terminated by EOF error the response body', async (testContext) => {
+  const t = tspl(testContext, { plan: 3 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
 
-  const server = net.createServer((socket) => {
+  const { server } = resources.use(createTrackedServer(socket => {
     socket.end(truncatedChunkedResponse)
-  })
-  after(() => server.close())
+  }))
 
-  await new Promise(resolve => server.listen(0, resolve))
+  await listen(server)
 
-  const client = new Client(`http://localhost:${server.address().port}`)
-  after(() => client.destroy())
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
 
   client.request({
     method: 'GET',
@@ -46,10 +77,12 @@ test('truncated chunked responses terminated by EOF error the response body', as
   await t.completed
 })
 
-test('https://github.com/mcollina/undici/issues/268', async (t) => {
-  t = tspl(t, { plan: 2 })
+test('https://github.com/mcollina/undici/issues/268', async (testContext) => {
+  const t = tspl(testContext, { plan: 2 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
 
-  const server = net.createServer(socket => {
+  const { server } = resources.use(createTrackedServer(socket => {
     socket.write('HTTP/1.1 200 OK\r\n')
     socket.write('Transfer-Encoding: chunked\r\n\r\n')
     setTimeout(() => {
@@ -60,106 +93,105 @@ test('https://github.com/mcollina/undici/issues/268', async (t) => {
         socket.write('\n\r\n')
       }, 500)
     }, 500)
-  })
-  after(() => server.close())
+  }))
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
+  await listen(server)
 
-    client.request({
-      method: 'GET',
-      path: '/nxt/_changes?feed=continuous&heartbeat=5000',
-      headersTimeout: 1e3
-    }, (err, data) => {
-      t.ifError(err)
-      data.body
-        .resume()
-      setTimeout(() => {
-        t.ok(true, 'pass')
-        data.body.on('error', () => {})
-      }, 2e3)
-    })
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  client.on('disconnect', () => {
+    if (!client.closed && !client.destroyed) {
+      t.fail('unexpected disconnect')
+    }
   })
 
-  await t.completed
-})
-
-test('parser fail', async (t) => {
-  t = tspl(t, { plan: 2 })
-
-  const server = net.createServer(socket => {
-    socket.write('HTT/1.1 200 OK\r\n')
-  })
-  after(() => server.close())
-
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
-
-    client.request({
-      method: 'GET',
-      path: '/'
-    }, (err, data) => {
-      t.ok(err)
-      t.ok(err instanceof errors.HTTPParserError)
-    })
+  client.request({
+    method: 'GET',
+    path: '/nxt/_changes?feed=continuous&heartbeat=5000',
+    headersTimeout: 1e3
+  }, (err, data) => {
+    t.ifError(err)
+    data.body.resume()
+    setTimeout(() => {
+      t.ok(true, 'pass')
+      data.body.on('error', () => {})
+    }, 2e3)
   })
 
   await t.completed
 })
 
-test('split header field', async (t) => {
-  t = tspl(t, { plan: 2 })
+test('parser fail', async (testContext) => {
+  const t = tspl(testContext, { plan: 2 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
 
-  const server = net.createServer(socket => {
+  const { server } = resources.use(createTrackedServer(socket => {
+    socket.end('HTT/1.1 200 OK\r\n')
+  }))
+
+  await listen(server)
+
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  client.request({
+    method: 'GET',
+    path: '/'
+  }, (err, data) => {
+    t.ok(err)
+    t.ok(err instanceof errors.HTTPParserError)
+  })
+
+  await t.completed
+})
+
+test('split header field', async (testContext) => {
+  const t = tspl(testContext, { plan: 2 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
+
+  const { server } = resources.use(createTrackedServer(socket => {
     socket.write('HTTP/1.1 200 OK\r\nA')
     setTimeout(() => {
-      socket.write('SD: asd,asd\r\n\r\n\r\n')
+      socket.end('SD: asd,asd\r\nContent-Length: 0\r\n\r\n')
     }, 100)
-  })
-  after(() => server.close())
+  }))
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
+  await listen(server)
 
-    client.request({
-      method: 'GET',
-      path: '/'
-    }, (err, data) => {
-      t.ifError(err)
-      t.equal(data.headers.asd, 'asd,asd')
-      data.body.destroy().on('error', () => {})
-    })
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  client.request({
+    method: 'GET',
+    path: '/'
+  }, (err, data) => {
+    t.ifError(err)
+    t.equal(data.headers.asd, 'asd,asd')
+    data.body.resume()
   })
 
   await t.completed
 })
 
-test('split header value', async (t) => {
-  t = tspl(t, { plan: 2 })
+test('split header value', async (testContext) => {
+  const t = tspl(testContext, { plan: 2 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
 
-  const server = net.createServer(socket => {
+  const { server } = resources.use(createTrackedServer(socket => {
     socket.write('HTTP/1.1 200 OK\r\nASD: asd')
     setTimeout(() => {
-      socket.write(',asd\r\n\r\n\r\n')
+      socket.end(',asd\r\nContent-Length: 0\r\n\r\n')
     }, 100)
-  })
-  after(() => server.close())
+  }))
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`)
-    after(() => client.destroy())
+  await listen(server)
 
-    client.request({
-      method: 'GET',
-      path: '/'
-    }, (err, data) => {
-      t.ifError(err)
-      t.equal(data.headers.asd, 'asd,asd')
-      data.body.destroy().on('error', () => {})
-    })
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  client.request({
+    method: 'GET',
+    path: '/'
+  }, (err, data) => {
+    t.ifError(err)
+    t.equal(data.headers.asd, 'asd,asd')
+    data.body.resume()
   })
 
   await t.completed
