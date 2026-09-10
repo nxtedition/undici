@@ -3,7 +3,7 @@
 const { test } = require('node:test')
 const assert = require('node:assert')
 const { setTimeout: delay } = require('node:timers/promises')
-const { EventEmitter } = require('node:events')
+const { EventEmitter, once } = require('node:events')
 const { PassThrough } = require('node:stream')
 const net = require('node:net')
 const { Client, Pool, errors } = require('..')
@@ -15,6 +15,24 @@ function requestOutcome (client, signal) {
     client.request({ path: '/', method: 'GET', signal }, (err) => resolve(err))
   })
 }
+
+test('client destroy preserves the reason for a late connector socket', async () => {
+  let completeConnect
+  const client = new Client('http://localhost', {
+    connect (opts, callback) {
+      completeConnect = callback
+    }
+  })
+  const outcome = requestOutcome(client)
+  const reason = new Error('client shutdown')
+  await client.destroy(reason)
+  assert.strictEqual(await outcome, reason)
+
+  const socket = new PassThrough()
+  const socketError = once(socket, 'error')
+  completeConnect(null, socket)
+  assert.strictEqual((await socketError)[0], reason)
+})
 
 test('pre-aborted request does not connect', async (t) => {
   let connectCalls = 0
