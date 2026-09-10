@@ -318,3 +318,62 @@ test('fail if headers is not an object or an array', async (t) => {
 
   await t.completed
 })
+
+async function assertDuplicateHeaderRejected ({ headers, method, body, message }) {
+  let connections = 0
+  const client = new Client('http://localhost', {
+    connect (opts, callback) {
+      connections++
+      callback(new Error('unexpected connection'))
+    }
+  })
+
+  try {
+    await assert.rejects(
+      client.request({
+        path: '/',
+        method,
+        headers,
+        body
+      }),
+      new errors.InvalidArgumentError(message)
+    )
+    assert.strictEqual(connections, 0)
+  } finally {
+    await client.destroy()
+  }
+}
+
+test('fail if duplicate content-length headers (different case)', async () => {
+  await assertDuplicateHeaderRejected({
+    headers: ['Content-Length', '5', 'content-length', '0'],
+    method: 'POST',
+    body: 'hello',
+    message: 'duplicate content-length header'
+  })
+})
+
+test('fail if duplicate content-length headers (same case)', async () => {
+  await assertDuplicateHeaderRejected({
+    headers: ['content-length', '5', 'content-length', '0'],
+    method: 'POST',
+    body: 'hello',
+    message: 'duplicate content-length header'
+  })
+})
+
+test('fail if duplicate host headers (different case)', async () => {
+  await assertDuplicateHeaderRejected({
+    headers: ['Host', 'example.com', 'host', 'evil.com'],
+    method: 'GET',
+    message: 'duplicate host header'
+  })
+})
+
+test('fail if duplicate host headers (same case)', async () => {
+  await assertDuplicateHeaderRejected({
+    headers: ['host', 'example.com', 'host', 'evil.com'],
+    method: 'GET',
+    message: 'duplicate host header'
+  })
+})
