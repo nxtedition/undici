@@ -22,6 +22,7 @@ async function types () {
     socketPath: '/tmp/undici.sock',
     connect (options, callback) {
       options.socketPath?.toUpperCase()
+      options.signal?.aborted satisfies boolean | undefined
       callback(new Error('fixture'), null)
     },
     allowH2: false
@@ -204,7 +205,12 @@ async function types () {
     rejectUnauthorized: false
   })
 
-  const connectingSocket = connector({ hostname: 'localhost', protocol: 'http:', socketPath: '/tmp/undici.sock' }, (error, socket) => {
+  const connectingSocket = connector({
+    hostname: 'localhost',
+    protocol: 'http:',
+    socketPath: '/tmp/undici.sock',
+    signal: AbortSignal.timeout(1000)
+  }, (error, socket) => {
     if (error === null && socket) {
       socket.destroy()
     } else {
