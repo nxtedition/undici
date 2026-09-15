@@ -13,6 +13,7 @@ import undici, {
   setGlobalDispatcher,
   util
 } from '../..'
+import type { HeaderMap } from '../..'
 import undiciRequire = require('../..')
 
 function acceptsUnknown (_value: unknown) {}
@@ -36,6 +37,7 @@ async function types () {
       abort(false)
     },
     onHeaders (statusCode, headers, resume) {
+      headers satisfies HeaderMap
       statusCode.toFixed()
       headers['content-type']?.toString()
       resume()
@@ -45,6 +47,7 @@ async function types () {
       return chunk.byteLength > 0
     },
     onComplete (trailers) {
+      trailers satisfies HeaderMap
       trailers.date?.toString()
     },
     onError (reason) {
@@ -75,6 +78,7 @@ async function types () {
       abort({ application: 'reason' })
     },
     onUpgrade (statusCode, headers, socket) {
+      headers satisfies HeaderMap
       statusCode.toFixed()
       headers.connection?.toString()
       socket.destroy()
@@ -102,6 +106,8 @@ async function types () {
 
   response.opaque.requestId satisfies 42
   response.context satisfies unknown
+  response.headers satisfies HeaderMap
+  response.trailers satisfies HeaderMap
   response.headers.date?.toString()
   response.trailers.date?.toString()
   await response.body.dump({ limit: 1024, signal: AbortSignal.timeout(10) }) satisfies void

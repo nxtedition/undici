@@ -8,6 +8,47 @@ import type { UrlObject } from 'node:url'
 
 export type URLInput = string | URL | UrlObject
 
+/**
+ * A parsed header or trailer field section, keyed by lowercased field name.
+ * This is what parseHeaders produces and what the transport hands to handlers.
+ *
+ * Two guarantees, both of which let consumers copy one of these maps without
+ * re-deriving the checks:
+ *
+ * 1. No value is nullish. parseHeaders only ever stores a latin1 string or an
+ *    array of them — a repeated field line becomes the array.
+ * 2. No own key is `__proto__`. It is a valid RFC 9110 field-name token, so a peer
+ *    may send one, but parseHeaders drops it. Assigning that key onto a plain
+ *    object invokes Object.prototype's setter, and for a repeated field line —
+ *    whose value is an array — that replaces the target's prototype outright.
+ *
+ * Other field names are retained, including `constructor`; `toString` is
+ * normalized to `tostring` like any other mixed-case field name.
+ *
+ * The `__proto__?: never` member makes guarantee 2 checkable rather than merely
+ * documented: `h.__proto__ = v`, `h['__proto__'] = v` and a literal
+ * `{ __proto__: v }` are all compile errors. It must stay OPTIONAL — a required
+ * `__proto__: never` would reject every ordinary header object for "missing"
+ * the property.
+ *
+ * It is a guard rail, not a proof. A dynamic key (`h[name] = v`, which is what
+ * copy loops do) still gets through, and because a plain
+ * Record<string, string | string[]> satisfies the optional member vacuously,
+ * round-tripping a value through that wider type launders the guarantee. The
+ * runtime drop in parseHeaders is what actually holds the line. A caller-supplied
+ * accumulator must already satisfy these guarantees; existing properties are
+ * preserved.
+ */
+export type HeaderMap = Record<string, string | string[]> & { __proto__?: never }
+
+/**
+ * The historical, wider spelling of a field section, kept for compatibility.
+ *
+ * Its `| undefined` is an artifact of mirroring Node's http.IncomingHttpHeaders,
+ * where undefined expresses "indexing an arbitrary name may miss" rather than a
+ * storable value. No parsed field section actually contains one; prefer
+ * HeaderMap, which says so.
+ */
 export type IncomingHttpHeaders = Record<string, string | string[] | undefined>
 
 export type HeaderValue = string | number | bigint | boolean | null | undefined
@@ -131,8 +172,8 @@ export namespace Dispatcher {
 
   interface ResponseData<TOpaque = null> {
     statusCode: number
-    headers: IncomingHttpHeaders
-    trailers: IncomingHttpHeaders
+    headers: HeaderMap
+    trailers: HeaderMap
     /** The request opaque value, with null and undefined normalized to null. */
     opaque: TOpaque extends null | undefined ? null : TOpaque
     body: Readable
@@ -146,17 +187,17 @@ export namespace Dispatcher {
   }
 
   interface ResponseDispatchHandler extends DispatchHandlerBase {
-    onHeaders(statusCode: number, headers: IncomingHttpHeaders, resume: () => void): boolean | void
+    onHeaders(statusCode: number, headers: HeaderMap, resume: () => void): boolean | void
     onData(chunk: Buffer): boolean | void
-    onComplete(trailers: IncomingHttpHeaders): void
-    onUpgrade?(statusCode: number, headers: IncomingHttpHeaders, socket: Socket): void
+    onComplete(trailers: HeaderMap): void
+    onUpgrade?(statusCode: number, headers: HeaderMap, socket: Socket): void
   }
 
   interface UpgradeDispatchHandler extends DispatchHandlerBase {
-    onUpgrade(statusCode: number, headers: IncomingHttpHeaders, socket: Socket): void
-    onHeaders?(statusCode: number, headers: IncomingHttpHeaders, resume: () => void): boolean | void
+    onUpgrade(statusCode: number, headers: HeaderMap, socket: Socket): void
+    onHeaders?(statusCode: number, headers: HeaderMap, resume: () => void): boolean | void
     onData?(chunk: Buffer): boolean | void
-    onComplete?(trailers: IncomingHttpHeaders): void
+    onComplete?(trailers: HeaderMap): void
   }
 
   type DispatchHandler = ResponseDispatchHandler | UpgradeDispatchHandler
@@ -480,8 +521,8 @@ export namespace errors {
 export namespace util {
   function headerNameToString (value: string | Buffer): string
 
-  function parseHeaders (headers: readonly (Buffer | string | readonly (Buffer | string)[])[]): IncomingHttpHeaders
-  function parseHeaders<T extends IncomingHttpHeaders> (
+  function parseHeaders (headers: readonly (Buffer | string | readonly (Buffer | string)[])[]): HeaderMap
+  function parseHeaders<T extends HeaderMap> (
     headers: readonly (Buffer | string | readonly (Buffer | string)[])[],
     object: T
   ): T
