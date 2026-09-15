@@ -8,6 +8,18 @@ import type { UrlObject } from 'node:url'
 
 export type URLInput = string | URL | UrlObject
 
+/**
+ * A parsed header or trailer field section, keyed by lowercased field name.
+ *
+ * Never contains a `__proto__` key: it is a valid RFC 9110 field-name token, so
+ * a peer may send one, but parseHeaders drops it. Assigning that key onto a
+ * plain object invokes Object.prototype's setter — for a repeated field line,
+ * whose value is an array, that replaces the target's prototype — so consumers
+ * copying one of these maps can do so without guarding for it.
+ *
+ * Other names that shadow Object.prototype (`constructor`, `toString`, …) are
+ * ordinary data properties and ARE present when the peer sends them.
+ */
 export type IncomingHttpHeaders = Record<string, string | string[] | undefined>
 
 export type HeaderValue = string | number | bigint | boolean | null | undefined
