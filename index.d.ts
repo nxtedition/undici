@@ -12,8 +12,8 @@ export type URLInput = string | URL | UrlObject
  * A parsed header or trailer field section, keyed by lowercased field name.
  * This is what parseHeaders produces and what the transport hands to handlers.
  *
- * Two guarantees, both of which let consumers copy one of these maps without
- * re-deriving the checks:
+ * Three guarantees, all of which let consumers copy or read one of these maps
+ * without re-deriving the checks:
  *
  * 1. No value is nullish. parseHeaders only ever stores a latin1 string or an
  *    array of them — a repeated field line becomes the array.
@@ -21,6 +21,12 @@ export type URLInput = string | URL | UrlObject
  *    may send one, but parseHeaders drops it. Assigning that key onto a plain
  *    object invokes Object.prototype's setter, and for a repeated field line —
  *    whose value is an array — that replaces the target's prototype outright.
+ * 3. Every own key is lowercased. Field names are case-insensitive (RFC 9110
+ *    §5.1) and parseHeaders lowercases each one, so `h['content-type']` finds the
+ *    field however the peer spelled it, and two spellings of one name collapse
+ *    into a single entry whose repeated values form an array — a consumer never
+ *    has to lowercase a key, nor look for a second entry under another casing.
+ *    Only the key is normalized; values are stored as received.
  *
  * Other field names are retained, including `constructor`; `toString` is
  * normalized to `tostring` like any other mixed-case field name.
@@ -38,6 +44,13 @@ export type URLInput = string | URL | UrlObject
  * runtime drop in parseHeaders is what actually holds the line. A caller-supplied
  * accumulator must already satisfy these guarantees; existing properties are
  * preserved.
+ *
+ * Guarantee 3 gets no such guard rail: an index signature applies to every string
+ * key, and `Lowercase<string>` widens straight back to `string`, so there is no
+ * type that admits `'content-type'` and rejects `'Content-Type'`. It rests on the
+ * normalization in parseHeaders alone — which is also why an accumulator passed
+ * to it must arrive with lowercased keys, or the same field can end up stored
+ * twice under two casings.
  */
 export type HeaderMap = Record<string, string | string[]> & { __proto__?: never }
 

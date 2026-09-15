@@ -216,6 +216,28 @@ test('parseHeaders', () => {
   assert.deepEqual(util.parseHeaders([Buffer.from('key'), [Buffer.from('value1'), Buffer.from('value2'), Buffer.from('value3')]]), { key: ['value1', 'value2', 'value3'] })
 })
 
+test('parseHeaders lowercases every key', () => {
+  // Field names are case-insensitive (RFC 9110 5.1), so the returned map keys
+  // them lowercased whichever path headerNameToString takes: the wellknown-name
+  // record for strings, the ternary tree for buffers, or toLowerCase() for the
+  // rest. Consumers rely on that to look a field up with a lowercase literal.
+  const parsed = util.parseHeaders([
+    'Content-Type', 'text/plain', // wellknown string -> record
+    Buffer.from('Content-Length'), Buffer.from('3'), // wellknown buffer -> tree
+    'X-Custom-Name', 'a', // unknown string -> toLowerCase
+    Buffer.from('X-Other-Name'), Buffer.from('b') // unknown buffer -> toLowerCase
+  ])
+  assert.deepEqual(Object.keys(parsed), ['content-type', 'content-length', 'x-custom-name', 'x-other-name'])
+
+  // Two spellings of one name are one entry, not two.
+  assert.deepEqual(util.parseHeaders(['X-Test', 'a', 'x-test', 'b', Buffer.from('X-TEST'), Buffer.from('c')]), {
+    'x-test': ['a', 'b', 'c']
+  })
+
+  // Accumulating into a map keyed by the lowercase name appends to that entry.
+  assert.deepEqual(util.parseHeaders(['X-Test', 'b'], { 'x-test': 'a' }), { 'x-test': ['a', 'b'] })
+})
+
 test('parseHeaders drops __proto__', () => {
   // A valid field-name token, but assigning it onto a plain object hits
   // Object.prototype's setter — and a repeated field line, which arrives as an
