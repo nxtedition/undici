@@ -24,8 +24,20 @@ export type URLInput = string | URL | UrlObject
  *
  * Other names that shadow Object.prototype (`constructor`, `toString`, …) are
  * ordinary data properties and ARE present when the peer sends them.
+ *
+ * The `__proto__?: never` member makes guarantee 2 checkable rather than merely
+ * documented: `h.__proto__ = v`, `h['__proto__'] = v` and a literal
+ * `{ __proto__: v }` are all compile errors. It must stay OPTIONAL — a required
+ * `__proto__: never` would reject every ordinary header object for "missing"
+ * the property.
+ *
+ * It is a guard rail, not a proof. A dynamic key (`h[name] = v`, which is what
+ * copy loops do) still gets through, and because a plain
+ * Record<string, string | string[]> satisfies the optional member vacuously,
+ * round-tripping a value through that wider type launders the guarantee. The
+ * runtime drop in parseHeaders is what actually holds the line.
  */
-export type HeaderMap = Record<string, string | string[]>
+export type HeaderMap = Record<string, string | string[]> & { __proto__?: never }
 
 /**
  * The historical, wider spelling of a field section, kept for compatibility.
