@@ -6,8 +6,21 @@ function headerMapTypes () {
 
   util.parseHeaders(['x-test', ['a', 'b']] as const) satisfies HeaderMap
   util.parseHeaders([], headers) satisfies HeaderMap
-  const accumulated = util.parseHeaders(['x-test', 'yes'], { existing: 'value' })
+  const accumulated = util.parseHeaders(['Existing', 'again', 'X-Test', 'yes'], { existing: 'value' })
+  accumulated satisfies HeaderMap
+  accumulated.existing satisfies string | string[] | undefined
+  accumulated['x-test'] satisfies string | string[] | undefined
+  // @ts-expect-error Accumulating can turn an existing string into an array.
   accumulated.existing satisfies string
+
+  // Dynamic reads and copies remain supported; producers must lowercase names.
+  const copy: HeaderMap = {}
+  for (const [key, value] of Object.entries(headers)) {
+    copy[key] = value
+  }
+  for (const key of Object.keys(copy)) {
+    copy[key] satisfies string | string[] | undefined
+  }
 
   // Values that exist are never nullish, while arbitrary lookups can miss.
   for (const value of Object.values(headers)) {

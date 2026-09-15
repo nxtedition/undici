@@ -238,6 +238,45 @@ test('parseHeaders lowercases every key', () => {
   assert.deepEqual(util.parseHeaders(['X-Test', 'b'], { 'x-test': 'a' }), { 'x-test': ['a', 'b'] })
 })
 
+test('parseHeaders preserves repeated array values under one lowercase key', () => {
+  const values = ['Second, Value', Buffer.from('caf\u00e9', 'latin1')]
+  for (const first of ['First', ['First'], Buffer.from('First')]) {
+    assert.deepEqual(util.parseHeaders([
+      'X-Test', first,
+      Buffer.from('X-TEST'), values,
+      'x-test', 'Last'
+    ]), { 'x-test': ['First', 'Second, Value', 'caf\u00e9', 'Last'] })
+  }
+  assert.deepEqual(values, ['Second, Value', Buffer.from('caf\u00e9', 'latin1')])
+})
+
+test('parseHeaders appends to an existing HeaderMap in place', () => {
+  const values = ['First']
+  const headers = { 'x-test': values, 'x-other': 'Original' }
+  const parsed = util.parseHeaders([
+    'X-Test', [Buffer.from('caf\u00e9', 'latin1'), 'Last'],
+    'X-Other', ['Repeated'],
+    'X-New', 'New'
+  ], headers)
+
+  assert.strictEqual(parsed, headers)
+  assert.strictEqual(parsed['x-test'], values)
+  assert.deepEqual(parsed, {
+    'x-test': ['First', 'caf\u00e9', 'Last'],
+    'x-other': ['Original', 'Repeated'],
+    'x-new': 'New'
+  })
+})
+
+test('parseHeaders can append an accumulator array to itself', () => {
+  const values = ['First', 'Second']
+  const headers = { 'x-test': values }
+  assert.deepEqual(util.parseHeaders(['X-Test', values], headers), {
+    'x-test': ['First', 'Second', 'First', 'Second']
+  })
+  assert.strictEqual(headers['x-test'], values)
+})
+
 test('parseHeaders drops __proto__', () => {
   // A valid field-name token, but assigning it onto a plain object hits
   // Object.prototype's setter — and a repeated field line, which arrives as an
