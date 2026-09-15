@@ -216,6 +216,33 @@ test('parseHeaders', () => {
   assert.deepEqual(util.parseHeaders([Buffer.from('key'), [Buffer.from('value1'), Buffer.from('value2'), Buffer.from('value3')]]), { key: ['value1', 'value2', 'value3'] })
 })
 
+test('parseHeaders drops __proto__', () => {
+  // A valid field-name token, but assigning it onto a plain object hits
+  // Object.prototype's setter — and a repeated field line, which arrives as an
+  // array, would replace the prototype outright. Dropped so the returned object
+  // can guarantee it has no such key.
+  const single = util.parseHeaders(['__proto__', 'pwned', 'key', 'value'])
+  assert.deepEqual(single, { key: 'value' })
+  assert.strictEqual(Object.hasOwn(single, '__proto__'), false)
+  assert.strictEqual(Object.getPrototypeOf(single), Object.prototype)
+
+  const repeated = util.parseHeaders(['__proto__', 'a', '__proto__', 'b'])
+  assert.deepEqual(repeated, {})
+  assert.strictEqual(Object.getPrototypeOf(repeated), Object.prototype)
+
+  // Mixed case is the same field name (RFC 9110 field names are
+  // case-insensitive, and headerNameToString lowercases).
+  const mixed = util.parseHeaders(['__PROTO__', 'pwned'])
+  assert.strictEqual(Object.hasOwn(mixed, '__proto__'), false)
+
+  // Other Object.prototype names stay: plain assignment handles them. Field
+  // names are lowercased, so `toString` lands as the (still shadowing) key
+  // `tostring`; `constructor` is already lowercase.
+  const shadowing = util.parseHeaders(['constructor', 'built-in', 'toString', 'str'])
+  assert.strictEqual(shadowing.constructor, 'built-in')
+  assert.strictEqual(shadowing.tostring, 'str')
+})
+
 test('serializePathWithQuery', () => {
   const tests = [
     [{ id: BigInt(123456) }, 'id=123456'],
