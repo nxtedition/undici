@@ -45,12 +45,12 @@ export type URLInput = string | URL | UrlObject
  * accumulator must already satisfy these guarantees; existing properties are
  * preserved.
  *
- * Guarantee 3 gets no such guard rail: an index signature applies to every string
- * key, and `Lowercase<string>` widens straight back to `string`, so there is no
- * type that admits `'content-type'` and rejects `'Content-Type'`. It rests on the
- * normalization in parseHeaders alone — which is also why an accumulator passed
- * to it must arrive with lowercased keys, or the same field can end up stored
- * twice under two casings.
+ * Guarantee 3 is a producer contract. A `Lowercase<string>` index signature can
+ * reject mixed-case literal keys, but also rejects ordinary string indexing,
+ * including keys from Object.keys() and String#toLowerCase(). This type keeps
+ * string indexing for consumers that read or copy maps dynamically. parseHeaders
+ * normalizes incoming names; caller-supplied accumulators and maps synthesized
+ * by custom dispatchers or interceptors must already have lowercased keys.
  */
 export type HeaderMap = Record<string, string | string[]> & { __proto__?: never }
 
@@ -534,11 +534,15 @@ export namespace errors {
 export namespace util {
   function headerNameToString (value: string | Buffer): string
 
-  function parseHeaders (headers: readonly (Buffer | string | readonly (Buffer | string)[])[]): HeaderMap
-  function parseHeaders<T extends HeaderMap> (
+  /**
+   * Lowercases raw field names and preserves individual values as Latin-1 strings.
+   * An accumulator must already satisfy HeaderMap and is updated in place.
+   * Repeated names can turn its existing string properties into arrays.
+   */
+  function parseHeaders (
     headers: readonly (Buffer | string | readonly (Buffer | string)[])[],
-    object: T
-  ): T
+    object?: HeaderMap
+  ): HeaderMap
 }
 
 export interface TopLevelRequestOptions<TOpaque = null>

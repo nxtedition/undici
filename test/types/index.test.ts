@@ -221,7 +221,7 @@ async function types () {
 
   util.headerNameToString(Buffer.from('Content-Type')) satisfies string
   const parsed = util.parseHeaders([Buffer.from('x-test'), Buffer.from('yes')], { existing: 'value' })
-  parsed.existing satisfies string
+  parsed.existing satisfies string | string[] | undefined
 
   const body = new Readable({
     resume () {},
