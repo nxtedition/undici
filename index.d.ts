@@ -17,13 +17,13 @@ export type URLInput = string | URL | UrlObject
  *
  * 1. No value is nullish. parseHeaders only ever stores a latin1 string or an
  *    array of them — a repeated field line becomes the array.
- * 2. No key is `__proto__`. It is a valid RFC 9110 field-name token, so a peer
+ * 2. No own key is `__proto__`. It is a valid RFC 9110 field-name token, so a peer
  *    may send one, but parseHeaders drops it. Assigning that key onto a plain
  *    object invokes Object.prototype's setter, and for a repeated field line —
  *    whose value is an array — that replaces the target's prototype outright.
  *
- * Other names that shadow Object.prototype (`constructor`, `toString`, …) are
- * ordinary data properties and ARE present when the peer sends them.
+ * Other field names are retained, including `constructor`; `toString` is
+ * normalized to `tostring` like any other mixed-case field name.
  *
  * The `__proto__?: never` member makes guarantee 2 checkable rather than merely
  * documented: `h.__proto__ = v`, `h['__proto__'] = v` and a literal
@@ -35,7 +35,9 @@ export type URLInput = string | URL | UrlObject
  * copy loops do) still gets through, and because a plain
  * Record<string, string | string[]> satisfies the optional member vacuously,
  * round-tripping a value through that wider type launders the guarantee. The
- * runtime drop in parseHeaders is what actually holds the line.
+ * runtime drop in parseHeaders is what actually holds the line. A caller-supplied
+ * accumulator must already satisfy these guarantees; existing properties are
+ * preserved.
  */
 export type HeaderMap = Record<string, string | string[]> & { __proto__?: never }
 

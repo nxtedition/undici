@@ -1,0 +1,40 @@
+import { type HeaderMap, type IncomingHttpHeaders, util } from '../..'
+
+function headerMapTypes () {
+  const headers: HeaderMap = { 'content-type': 'text/plain', 'set-cookie': ['a', 'b'] }
+  headers satisfies IncomingHttpHeaders
+
+  util.parseHeaders(['x-test', ['a', 'b']] as const) satisfies HeaderMap
+  util.parseHeaders([], headers) satisfies HeaderMap
+  const accumulated = util.parseHeaders(['x-test', 'yes'], { existing: 'value' })
+  accumulated.existing satisfies string
+
+  // Values that exist are never nullish, while arbitrary lookups can miss.
+  for (const value of Object.values(headers)) {
+    value satisfies string | string[]
+  }
+  headers.missing satisfies string | string[] | undefined
+  // @ts-expect-error Missing fields require a check with noUncheckedIndexedAccess.
+  headers.missing satisfies string | string[]
+
+  // @ts-expect-error A stored header value cannot be undefined.
+  const undefinedValue: HeaderMap = { 'x-test': undefined }
+  // @ts-expect-error A stored header value cannot be null.
+  const nullValue: HeaderMap = { 'x-test': null }
+  // @ts-expect-error The literal __proto__ field is excluded.
+  const protoField: HeaderMap = { __proto__: ['a', 'b'] }
+  // @ts-expect-error Direct __proto__ writes are excluded.
+  headers.__proto__ = 'value' // eslint-disable-line no-proto
+  // @ts-expect-error Literal indexed __proto__ writes are excluded.
+  headers['__proto__'] = ['a', 'b'] // eslint-disable-line no-proto
+
+  const historical: IncomingHttpHeaders = { 'x-test': undefined }
+  // @ts-expect-error Accumulators must already contain only non-nullish values.
+  util.parseHeaders([], historical)
+
+  undefinedValue satisfies HeaderMap
+  nullValue satisfies HeaderMap
+  protoField satisfies HeaderMap
+}
+
+headerMapTypes satisfies () => void

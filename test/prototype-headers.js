@@ -4,7 +4,7 @@ const { test } = require('node:test')
 const assert = require('node:assert')
 const { promisify } = require('node:util')
 const net = require('node:net')
-const { Client } = require('..')
+const { Client, Dispatcher } = require('..')
 
 function createRawServer (response) {
   return net.createServer((socket) => {
@@ -18,6 +18,7 @@ test('request drops a __proto__ response header and keeps other shadowing names'
   const server = createRawServer([
     'HTTP/1.1 200 OK',
     '__proto__: pwned',
+    '__PROTO__: repeated',
     'constructor: built-in',
     'content-length: 2',
     'connection: close',
@@ -62,6 +63,7 @@ test('request drops a __proto__ response trailer and keeps other shadowing names
     'OK',
     '0',
     '__proto__: trailer',
+    '__PROTO__: repeated-trailer',
     'constructor: built-in-trailer',
     '',
     ''
@@ -87,4 +89,25 @@ test('request drops a __proto__ response trailer and keeps other shadowing names
   assert.strictEqual(Object.getOwnPropertyDescriptor(trailers, '__proto__'), undefined)
   assert.strictEqual(Object.getPrototypeOf(trailers), Object.prototype)
   assert.strictEqual(Object.getOwnPropertyDescriptor(trailers, 'constructor').value, 'built-in-trailer')
+})
+
+test('request drops __proto__ from synthesized trailers', async () => {
+  class SyntheticDispatcher extends Dispatcher {
+    dispatch (_opts, handler) {
+      handler.onConnect(() => {})
+      handler.onHeaders(200, {}, () => {})
+      handler.onComplete(JSON.parse('{"__proto__":["a","b"],"constructor":"built-in-trailer"}'))
+      return true
+    }
+  }
+
+  const { body, trailers } = await new SyntheticDispatcher().request({
+    path: '/',
+    method: 'GET'
+  })
+
+  assert.strictEqual(await body.text(), '')
+  assert.strictEqual(Object.hasOwn(trailers, '__proto__'), false)
+  assert.strictEqual(Object.getPrototypeOf(trailers), Object.prototype)
+  assert.strictEqual(trailers.constructor, 'built-in-trailer')
 })

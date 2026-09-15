@@ -236,7 +236,7 @@ test('parseHeaders drops __proto__', () => {
   assert.strictEqual(Object.hasOwn(mixed, '__proto__'), false)
 
   // Other Object.prototype names stay: plain assignment handles them. Field
-  // names are lowercased, so `toString` lands as the (still shadowing) key
+  // names are lowercased, so `toString` lands as the key
   // `tostring`; `constructor` is already lowercase.
   const shadowing = util.parseHeaders(['constructor', 'built-in', 'toString', 'str'])
   assert.strictEqual(shadowing.constructor, 'built-in')
