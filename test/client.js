@@ -1551,6 +1551,56 @@ test('connection reset errors on a truncated keep-alive Content-Length response 
   await t.completed
 })
 
+// The ECONNRESET branch completes an EOF-delimited response without recording
+// socket[kError]. An async iterable request body that is still being written
+// must still be terminated: writeIterable used to wait for a 'drain' that a
+// destroyed socket never emits, so the iterator was never returned and its
+// finally block never ran.
+test('connection reset terminates an iterable body after an EOF-delimited response', async (t) => {
+  t = tspl(t, { plan: 3 })
+
+  const server = createNetServer((socket) => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      socket.write('HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok')
+      setTimeout(() => socket.resetAndDestroy(), 50)
+    })
+  })
+  after(() => server.close())
+  await EE.once(server.listen(0, '127.0.0.1'), 'listening')
+
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
+  after(() => client.destroy())
+
+  const { promise: responded, resolve: release } = Promise.withResolvers()
+  const { promise: finalized, resolve: onFinalized } = Promise.withResolvers()
+
+  async function * body () {
+    try {
+      yield 'hello'
+      await responded
+      while (true) {
+        yield Buffer.alloc(1024)
+      }
+    } finally {
+      onFinalized()
+    }
+  }
+
+  const { statusCode, body: res } = await client.request({ path: '/', method: 'POST', body: body() })
+  t.strictEqual(statusCode, 200)
+  t.strictEqual(await res.text(), 'ok')
+  release()
+
+  let timer
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('iterable body was never terminated')), 5e3)
+  })
+  await Promise.race([finalized, timeout]).finally(() => clearTimeout(timer))
+  t.ok(true)
+  await t.completed
+})
+
 test('only one streaming req at a time', async (t) => {
   t = tspl(t, { plan: 7 })
 
