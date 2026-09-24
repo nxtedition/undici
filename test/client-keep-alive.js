@@ -5,7 +5,7 @@ const { test, after } = require('node:test')
 const { once } = require('node:events')
 const { Client } = require('..')
 const timers = require('../lib/util/timers')
-const { kConnect } = require('../lib/core/symbols')
+const { kConnect, kKeepAliveTimeoutValue } = require('../lib/core/symbols')
 const { createServer } = require('node:net')
 const http = require('node:http')
 const FakeTimers = require('@sinonjs/fake-timers')
@@ -479,5 +479,71 @@ test('a reused keep-alive timer only closes the socket while it is idle', async 
   t.strictEqual(err.code, 'UND_ERR_INFO')
   t.strictEqual(err.message, 'socket idle timeout')
   t.ok(performance.now() - start < 2e3)
+  await t.completed
+})
+
+test('tracked response headers are matched case-insensitively', async (t) => {
+  t = tspl(t, { plan: 4 })
+
+  // Keep-Alive, Connection and Content-Length are recognised by name however
+  // the server spells them: a truncated body must be caught through an
+  // upper-case Content-Length, and an upper-case Keep-Alive must set the idle
+  // timeout.
+  const server = createServer((socket) => {
+    socket.once('data', () => {
+      socket.write('HTTP/1.1 200 OK\r\nCONTENT-LENGTH: 2\r\nKEEP-ALIVE: timeout=3\r\nCONNECTION: keep-alive\r\n\r\nok')
+      socket.once('data', () => {
+        socket.end('HTTP/1.1 200 OK\r\nCONTENT-LENGTH: 10\r\nCONNECTION: close\r\n\r\nshort')
+      })
+    })
+  })
+  after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    keepAliveTimeoutThreshold: 2e3
+  })
+  after(() => client.destroy())
+
+  const first = await client.request({ path: '/', method: 'GET' })
+  t.strictEqual(await first.body.text(), 'ok')
+  // timeout=3 minus the 2 s threshold.
+  t.strictEqual(client[kKeepAliveTimeoutValue], 1e3)
+
+  const second = await client.request({ path: '/', method: 'GET' })
+  const err = await second.body.text().then(() => null, (err) => err)
+  t.ok(err)
+  t.strictEqual(err.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
+  await t.completed
+})
+
+test('a changed Keep-Alive timeout on a reused connection is honoured', async (t) => {
+  t = tspl(t, { plan: 3 })
+
+  // The parser remembers the last Keep-Alive value it parsed; a different
+  // value on a later response of the same connection must still take effect.
+  let responses = 0
+  const server = createServer((socket) => {
+    socket.on('data', () => {
+      const timeout = ++responses === 1 ? 60 : 5
+      socket.write(`HTTP/1.1 200 OK\r\nContent-Length: 0\r\nKeep-Alive: timeout=${timeout}\r\nConnection: keep-alive\r\n\r\n`)
+    })
+  })
+  after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    keepAliveTimeoutThreshold: 2e3
+  })
+  after(() => client.destroy())
+
+  await (await client.request({ path: '/', method: 'GET' })).body.dump()
+  t.strictEqual(client[kKeepAliveTimeoutValue], 58e3)
+
+  await (await client.request({ path: '/', method: 'GET' })).body.dump()
+  t.strictEqual(client[kKeepAliveTimeoutValue], 3e3)
+  t.strictEqual(responses, 2)
   await t.completed
 })
