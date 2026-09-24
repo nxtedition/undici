@@ -439,3 +439,45 @@ test('Disable keep alive', async (t) => {
   })
   await t.completed
 })
+
+test('a reused keep-alive timer only closes the socket while it is idle', async (t) => {
+  t = tspl(t, { plan: 6 })
+
+  // The parser keeps its keep-alive timer armed when a request is dispatched
+  // onto an idle socket, then refreshes it on the next idle period. A timer left
+  // over from the first idle period must not tear down a slow in-flight
+  // request, and the refreshed one must still close the socket afterwards.
+  const server = http.createServer({ keepAliveTimeout: 60e3 }, (req, res) => {
+    const delay = req.url === '/slow' ? 400 : 0
+    setTimeout(() => res.end('ok'), delay)
+  })
+  after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  // The server advertises Keep-Alive: timeout=60; cap what the client honors.
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    keepAliveTimeout: 200,
+    keepAliveMaxTimeout: 200
+  })
+  after(() => client.destroy())
+
+  let connects = 0
+  client.on('connect', () => connects++)
+
+  const first = await client.request({ path: '/', method: 'GET' })
+  t.strictEqual(await first.body.text(), 'ok')
+
+  // Idle briefly, then outlive the keep-alive timeout while waiting on headers.
+  await new Promise(resolve => setTimeout(resolve, 50))
+  const second = await client.request({ path: '/slow', method: 'GET' })
+  t.strictEqual(await second.body.text(), 'ok')
+  t.strictEqual(connects, 1)
+
+  const start = performance.now()
+  const [, , err] = await once(client, 'disconnect')
+  t.strictEqual(err.code, 'UND_ERR_INFO')
+  t.strictEqual(err.message, 'socket idle timeout')
+  t.ok(performance.now() - start < 2e3)
+  await t.completed
+})
