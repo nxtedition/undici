@@ -354,6 +354,14 @@ const { describe, test } = require('node:test')
         t.strictEqual(instance.exports.llhttp_set_lenient_transfer_encoding.length, 2, 'llhttp_set_lenient_transfer_encoding has the right number of arguments')
       })
 
+      // llhttp_set_lenient_header_value_relaxed
+      test('instance.exports.llhttp_set_lenient_header_value_relaxed', async (t) => {
+        t = tspl(t, { plan: 2 })
+
+        t.ok(typeof instance.exports.llhttp_set_lenient_header_value_relaxed === 'function', 'llhttp_set_lenient_header_value_relaxed is present')
+        t.strictEqual(instance.exports.llhttp_set_lenient_header_value_relaxed.length, 2, 'llhttp_set_lenient_header_value_relaxed has the right number of arguments')
+      })
+
       // llhttp_message_needs_eof
       test('instance.exports.llhttp_message_needs_eof', async (t) => {
         t = tspl(t, { plan: 2 })
