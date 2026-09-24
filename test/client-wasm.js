@@ -2,12 +2,22 @@
 
 const { tspl } = require('@matteo.collina/tspl')
 const { describe, test } = require('node:test')
+const { execFileSync } = require('node:child_process')
+const { join } = require('node:path')
 
   ;[
   ['generic', require('../lib/llhttp/llhttp-wasm.js')],
   ['simd', require('../lib/llhttp/llhttp_simd-wasm.js')]
 ].forEach(([name, llhttp]) => {
   describe(name, () => {
+    test('relaxed header values make progress through SIMD blocks and scalar tails', () => {
+      // A synchronous WASM loop cannot be interrupted by a test-runner timer.
+      execFileSync(process.execPath, [
+        join(__dirname, 'fixtures/llhttp-relaxed-headers.js'),
+        name === 'simd' ? 'llhttp_simd.wasm' : 'llhttp.wasm'
+      ], { timeout: 5000 })
+    })
+
     test('can compile the wasm code', async () => {
       await WebAssembly.compile(llhttp)
     })
@@ -87,6 +97,7 @@ const { describe, test } = require('node:test')
           'llhttp_set_lenient_optional_crlf_after_chunk',
           'llhttp_set_lenient_optional_cr_before_lf',
           'llhttp_set_lenient_spaces_after_chunk_size',
+          'llhttp_set_lenient_header_value_relaxed',
           'llhttp_message_needs_eof'
         ])
         await t.completed
@@ -351,6 +362,14 @@ const { describe, test } = require('node:test')
 
         t.ok(typeof instance.exports.llhttp_set_lenient_transfer_encoding === 'function', 'llhttp_set_lenient_transfer_encoding is present')
         t.strictEqual(instance.exports.llhttp_set_lenient_transfer_encoding.length, 2, 'llhttp_set_lenient_transfer_encoding has the right number of arguments')
+      })
+
+      // llhttp_set_lenient_header_value_relaxed
+      test('instance.exports.llhttp_set_lenient_header_value_relaxed', async (t) => {
+        t = tspl(t, { plan: 2 })
+
+        t.ok(typeof instance.exports.llhttp_set_lenient_header_value_relaxed === 'function', 'llhttp_set_lenient_header_value_relaxed is present')
+        t.strictEqual(instance.exports.llhttp_set_lenient_header_value_relaxed.length, 2, 'llhttp_set_lenient_header_value_relaxed has the right number of arguments')
       })
 
       // llhttp_message_needs_eof

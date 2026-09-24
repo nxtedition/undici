@@ -1,6 +1,7 @@
 'use strict'
 
 const { tspl } = require('@matteo.collina/tspl')
+const assert = require('node:assert/strict')
 const { once } = require('node:events')
 const { test } = require('node:test')
 const net = require('node:net')
@@ -375,4 +376,39 @@ test('HTTPParserError carries the llhttp error code', async (testContext) => {
   }
 
   await t.completed
+})
+
+for (const [name, response, code] of [
+  ['bare LF in status line', 'HTTP/1.1 200 OK\nContent-Length: 0\r\n\r\n', 'HPE_CR_EXPECTED'],
+  ['CR CR after status line', 'HTTP/1.1 200 OK\r\rContent-Length: 0\r\n\r\n', 'HPE_STRICT'],
+  ['empty Transfer-Encoding', 'HTTP/1.1 200 OK\r\nTransfer-Encoding:\r\n\r\n', 'HPE_INVALID_TRANSFER_ENCODING'],
+  ['whitespace-only Transfer-Encoding', 'HTTP/1.1 200 OK\r\nTransfer-Encoding: \t\r\n\r\n', 'HPE_INVALID_TRANSFER_ENCODING']
+]) {
+  test(`llhttp rejects ${name}`, async (t) => {
+    const resources = new globalThis.AsyncDisposableStack()
+    t.after(() => resources.disposeAsync())
+    const { server } = resources.use(createTrackedServer(socket => {
+      socket.on('error', () => {})
+      socket.once('data', () => socket.end(response))
+    }))
+    await listen(server)
+    const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+    await assert.rejects(client.request({ method: 'GET', path: '/' }), {
+      name: 'HTTPParserError', code
+    })
+  })
+}
+
+test('llhttp accepts a tab after Connection: close', async (t) => {
+  const resources = new globalThis.AsyncDisposableStack()
+  t.after(() => resources.disposeAsync())
+  const { server } = resources.use(createTrackedServer(socket => {
+    socket.on('error', () => {})
+    socket.once('data', () => socket.end('HTTP/1.1 200 OK\r\nConnection: close\t\r\n\r\nhello'))
+  }))
+  await listen(server)
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  const { statusCode, body } = await client.request({ method: 'GET', path: '/' })
+  assert.strictEqual(statusCode, 200)
+  assert.strictEqual(await body.text(), 'hello')
 })

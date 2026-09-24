@@ -51,3 +51,27 @@ test('wasm build treats an optimizer path as an executable, not shell input', ()
     ])
   }
 })
+
+test('wasm build fails before compiling or writing artifacts if the optimizer is unavailable', () => {
+  const script = path.resolve(__dirname, '../build/wasm.js')
+  const missing = new Error('optimizer unavailable')
+  assert.throws(() => runInNewContext(readFileSync(script, 'utf8'), {
+    __dirname: path.dirname(script),
+    process: { env: {}, argv: [] },
+    require (name) {
+      if (name === 'node:child_process') {
+        return {
+          execSync (command) {
+            assert.strictEqual(command, 'command -v apk', 'must not invoke the compiler')
+            throw new Error('not Alpine')
+          },
+          execFileSync () { throw missing }
+        }
+      }
+      if (name === 'node:fs') {
+        return { writeFileSync () { assert.fail('must not write artifacts') } }
+      }
+      return require(name)
+    }
+  }), err => err === missing)
+})
