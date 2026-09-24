@@ -1309,3 +1309,85 @@ test('pool keeps retried queued work tracked after a connection error', async (t
 
   assert.strictEqual(serverSockets.size, 0, 'pool.destroy closes the replacement socket')
 })
+
+// A connection error does not always fail the requests the failing client
+// holds: UND_ERR_SOCKET is treated as recoverable, so the client keeps its
+// request and reconnects for it after the pool has detached it. The pool must
+// still own that client: close() waits for it and destroy() reaches it.
+function detachedClientPool (t, onRequest) {
+  const serverSockets = new Set()
+  const server = createServer(onRequest)
+  server.on('connection', (socket) => {
+    serverSockets.add(socket)
+    socket.on('close', () => serverSockets.delete(socket))
+  })
+  t.after(() => {
+    for (const socket of serverSockets) {
+      socket.destroy()
+    }
+    server.close()
+  })
+
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => {
+      let attempts = 0
+      const pool = new Pool(`http://127.0.0.1:${server.address().port}`, {
+        connections: 1,
+        connect (opts, callback) {
+          if (++attempts === 1) {
+            process.nextTick(callback, new errors.SocketError('synthetic'))
+            return
+          }
+          const socket = net.connect({ host: opts.hostname, port: Number(opts.port) })
+          socket.once('error', callback)
+          socket.once('connect', () => callback(null, socket))
+        }
+      })
+      t.after(() => pool.destroy())
+      resolve({ pool, serverSockets })
+    })
+  })
+}
+
+test('pool.destroy() reaches a detached client that is finishing its own request', async (t) => {
+  let received
+  const requestReceived = new Promise((resolve) => { received = resolve })
+  // Never respond, so the request stays in flight on the detached client.
+  const { pool, serverSockets } = await detachedClientPool(t, () => received())
+
+  const settled = pool.request({ path: '/hang', method: 'GET' }).then(
+    () => null,
+    (err) => err
+  )
+
+  await withTimeout(requestReceived, 'the detached client never reconnected')
+  assert.strictEqual(serverSockets.size, 1)
+  const socketClosed = new Promise((resolve) => [...serverSockets][0].once('close', resolve))
+
+  await pool.destroy()
+
+  const err = await withTimeout(settled, 'the request never settled after pool.destroy()')
+  assert.ok(err instanceof errors.ClientDestroyedError)
+  await withTimeout(socketClosed, 'pool.destroy() left the detached connection open')
+})
+
+test('pool.close() waits for a detached client to finish its own request', async (t) => {
+  const { promise: requested, resolve: onRequest } = Promise.withResolvers()
+  const { pool } = await detachedClientPool(t, (req, res) => {
+    onRequest(() => res.end('done'))
+  })
+
+  const response = pool.request({ path: '/slow', method: 'GET' })
+    .then(({ body }) => body.text())
+
+  const respond = await withTimeout(requested, 'the detached client never reconnected')
+
+  let closed = false
+  const closing = pool.close().then(() => { closed = true })
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.strictEqual(closed, false, 'close() must wait for the detached client')
+
+  respond()
+  assert.strictEqual(await withTimeout(response, 'the request never completed'), 'done')
+  await withTimeout(closing, 'close() never resolved')
+})
