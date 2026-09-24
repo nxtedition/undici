@@ -100,6 +100,7 @@ test('dump disposes structural AbortSignal listener on close', async () => {
   const signal = {
     aborted: false,
     reason: undefined,
+    throwIfAborted () {},
     addEventListener (...args) {
       target.addEventListener(...args)
     },
@@ -148,7 +149,7 @@ test('concurrent dumps apply the smallest limit', async () => {
 test('a failed dump setup does not lower a later dump limit', async (t) => {
   const body = createBody()
   t.after(() => body.destroy())
-  await assert.rejects(body.dump({ signal: { aborted: false }, limit: 10 }))
+  await assert.rejects(body.dump({ signal: { aborted: false, throwIfAborted () {} }, limit: 10 }))
 
   const dumped = body.dump({ limit: 1000 })
   body.push(Buffer.alloc(100))
