@@ -182,6 +182,42 @@ test('split header field', async (testContext) => {
   await t.completed
 })
 
+test('header values keep obs-text and a split tracked name is still recognised', async (testContext) => {
+  const t = tspl(testContext, { plan: 4 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
+
+  const { server } = resources.use(createTrackedServer(socket => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      // Split the Content-Length name across two reads, and send a value with
+      // obs-text bytes (0x80-0xFF), which are decoded as latin1.
+      socket.write('HTTP/1.1 200 OK\r\nConte')
+      setTimeout(() => {
+        socket.end(Buffer.concat([
+          Buffer.from('nt-Length: 10\r\nConnection: close\r\nX-Latin: caf', 'latin1'),
+          Buffer.from([0xe9, 0x20, 0xff]),
+          Buffer.from('\r\n\r\nshort', 'latin1')
+        ]))
+      }, 50)
+    })
+  }))
+
+  await listen(server)
+
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  const { headers, body } = await client.request({ method: 'GET', path: '/' })
+  t.strictEqual(headers['content-length'], '10')
+  t.strictEqual(headers['x-latin'], 'caf\u00e9 \u00ff')
+
+  // The declared length is still tracked, so the short body is an error.
+  const err = await body.text().then(() => null, (err) => err)
+  t.ok(err)
+  t.strictEqual(err.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
+
+  await t.completed
+})
+
 test('split header value', async (testContext) => {
   const t = tspl(testContext, { plan: 2 })
   const resources = new globalThis.AsyncDisposableStack()
