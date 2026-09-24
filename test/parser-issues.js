@@ -151,6 +151,40 @@ test('parser fail', async (testContext) => {
   await t.completed
 })
 
+test('rejects DEL inside a quoted chunk extension value', async (testContext) => {
+  // llhttp 9.3.1 no longer accepts 0x7F in a quoted chunk-ext value; it is
+  // not qdtext (RFC 9110 5.6.4).
+  const t = tspl(testContext, { plan: 2 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
+
+  const { server } = resources.use(createTrackedServer(socket => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      socket.end(
+        'HTTP/1.1 200 OK\r\n' +
+        'Transfer-Encoding: chunked\r\n' +
+        '\r\n' +
+        '2;ext="a\x7fb"\r\n' +
+        'ok\r\n' +
+        '0\r\n' +
+        '\r\n'
+      )
+    })
+  }))
+
+  await listen(server)
+
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  const { body } = await client.request({ method: 'GET', path: '/' })
+  // The status line and headers are valid; the chunk that follows is not.
+  const err = await body.text().then(() => null, (err) => err)
+  t.ok(err instanceof errors.HTTPParserError)
+  t.match(err.message, /chunk extensions quoted value/)
+
+  await t.completed
+})
+
 test('split header field', async (testContext) => {
   const t = tspl(testContext, { plan: 2 })
   const resources = new globalThis.AsyncDisposableStack()
