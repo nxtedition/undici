@@ -149,6 +149,26 @@ describe('timers', () => {
     timers.clearTimeout(idle)
   })
 
+  test('a FastTimer cleared after it fired can be refreshed', async (t) => {
+    t = tspl(t, { plan: 2 })
+
+    let fired = 0
+    const timer = timers.setFastTimeout(() => {
+      fired++
+    }, 1001)
+
+    tick(2000)
+    t.strictEqual(fired, 1)
+
+    // Clearing a timer that already left the list must not strand it: the
+    // parser clears and re-arms the same FastTimer on every request.
+    timers.clearTimeout(timer)
+    timer.refresh()
+    tick(2000)
+    t.strictEqual(fired, 2)
+    timers.clearTimeout(timer)
+  })
+
   const getDelta = (start, target) => {
     const end = performance.now()
     const actual = end - start
