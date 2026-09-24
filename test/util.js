@@ -146,9 +146,8 @@ describe('parseURL', () => {
   })
 
   describe('when url is an common object', () => {
-    test.skip('does not throw if a urlLike object is passed', () => {
-      const url = parseURL({ protocol: 'http:' })
-      console.log(url)
+    test('throws if a urlLike object has no hostname', () => {
+      throws(() => parseURL({ protocol: 'http:' }), { code: 'ERR_INVALID_URL' })
     })
 
     describe('port', () => {
