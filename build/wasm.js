@@ -27,6 +27,7 @@ WASM_LDFLAGS += ' -Wl,--allow-undefined -Wl,--export-dynamic -Wl,--export-table'
 WASM_LDFLAGS += ' -Wl,--export=malloc -Wl,--export=free -Wl,--no-entry'
 
 const WASM_OPT_FLAGS = '-O4 --converge --strip-debug --strip-dwarf --strip-producers'
+const wasmOptFlags = WASM_OPT_FLAGS.split(/\s+/).filter(Boolean)
 
 const writeWasmChunk = (path, dest) => {
   const base64 = readFileSync(join(WASM_OUT, path)).toString('base64')
@@ -72,7 +73,7 @@ const hasApk = (function () {
   try { execSync('command -v apk'); return true } catch { return false }
 })()
 const hasOptimizer = (function () {
-  try { execSync(`${WASM_OPT} --version`); return true } catch { return false }
+  try { execFileSync(WASM_OPT, ['--version']); return true } catch { return false }
 })()
 if (hasApk) {
   // Gather information about the tools used for the build
@@ -91,7 +92,7 @@ ${join(WASM_SRC, 'src')}/*.c \
 ${WASM_LDLIBS}`, { stdio: 'inherit' })
 
 if (hasOptimizer) {
-  execSync(`${WASM_OPT} ${WASM_OPT_FLAGS} -o ${join(WASM_OUT, 'llhttp.wasm')} ${join(WASM_OUT, 'llhttp.wasm')}`, { stdio: 'inherit' })
+  execFileSync(WASM_OPT, [...wasmOptFlags, '-o', join(WASM_OUT, 'llhttp.wasm'), join(WASM_OUT, 'llhttp.wasm')], { stdio: 'inherit' })
 }
 writeWasmChunk('llhttp.wasm', 'llhttp-wasm.js')
 
@@ -103,12 +104,10 @@ ${join(WASM_SRC, 'src')}/*.c \
 ${WASM_LDLIBS}`, { stdio: 'inherit' })
 
 if (hasOptimizer) {
-  // Split WASM_OPT_FLAGS into an array, if not empty
-  const wasmOptFlagsArray = WASM_OPT_FLAGS ? WASM_OPT_FLAGS.split(/\s+/).filter(Boolean) : []
   execFileSync(
     WASM_OPT,
     [
-      ...wasmOptFlagsArray,
+      ...wasmOptFlags,
       '--enable-simd',
       '-o',
       join(WASM_OUT, 'llhttp_simd.wasm'),
