@@ -2304,7 +2304,7 @@ test('async iterator body sends any ArrayBufferView or ArrayBuffer chunk byte fo
   // Only the bytes each view covers are sent, whatever its element type,
   // offset or length.
   const cases = [
-    [new Int32Array([1]), Buffer.from([1, 0, 0, 0])],
+    [new Int32Array([1]), Buffer.from(new Int32Array([1]).buffer)],
     [new Float64Array([1]), Buffer.from(new Float64Array([1]).buffer)],
     [new DataView(new Uint8Array([0xde, 0xad, 0xbe, 0xef]).buffer, 1, 2), Buffer.from([0xad, 0xbe])],
     [Buffer.from('abcdef').subarray(2, 4), Buffer.from('cd')],
