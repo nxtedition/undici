@@ -314,3 +314,29 @@ test('refreshes wasm input view after reallocating parser buffer', async (testCo
 
   await t.completed
 })
+
+test('HTTPParserError carries the llhttp error code', async (testContext) => {
+  const t = tspl(testContext, { plan: 4 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
+
+  const responses = [
+    ['HTTP/1.1 2x0 OK\r\n\r\n', 'HPE_INVALID_STATUS'],
+    ['HTT/1.1 200 OK\r\n\r\n', 'HPE_INVALID_CONSTANT']
+  ]
+
+  for (const [response, code] of responses) {
+    const { server } = resources.use(createTrackedServer(socket => {
+      socket.on('error', () => {})
+      socket.once('data', () => socket.end(response))
+    }))
+    await listen(server)
+
+    const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+    const err = await client.request({ method: 'GET', path: '/' }).then(() => null, (err) => err)
+    t.ok(err instanceof errors.HTTPParserError)
+    t.strictEqual(err.code, code)
+  }
+
+  await t.completed
+})
