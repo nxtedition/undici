@@ -2300,38 +2300,38 @@ test('async iterator early return closes early', async (t) => {
   await t.completed
 })
 
-test('async iterator yield unsupported TypedArray', {
-  skip: !!require('stream')._isArrayBufferView
-}, async (t) => {
-  t = tspl(t, { plan: 3 })
-  const server = createServer((req, res) => {
-    req.on('end', () => {
-      res.writeHead(200)
-      res.end()
-    })
+test('async iterator body sends any ArrayBufferView or ArrayBuffer chunk byte for byte', async (t) => {
+  // Only the bytes each view covers are sent, whatever its element type,
+  // offset or length.
+  const cases = [
+    [new Int32Array([1]), Buffer.from(new Int32Array([1]).buffer)],
+    [new Float64Array([1]), Buffer.from(new Float64Array([1]).buffer)],
+    [new DataView(new Uint8Array([0xde, 0xad, 0xbe, 0xef]).buffer, 1, 2), Buffer.from([0xad, 0xbe])],
+    [Buffer.from('abcdef').subarray(2, 4), Buffer.from('cd')],
+    [new Uint8Array([1, 2, 3]).buffer, Buffer.from([1, 2, 3])]
+  ]
+
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) {
+      chunks.push(chunk)
+    }
+    res.end(Buffer.concat(chunks))
   })
   after(() => server.close())
+  await EE.once(server.listen(0), 'listening')
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`, {
-      bodyTimeout: 0
-    })
-    after(() => client.close())
-    const body = (async function * () {
-      try {
-        yield new Int32Array([1])
-        t.fail('should not get here, iterator should be destroyed')
-      } finally {
-        t.ok(true, 'pass')
-      }
-    })()
-    client.request({ path: '/', method: 'POST', body }, (err) => {
-      t.ok(err)
-      t.strictEqual(err.code, 'ERR_INVALID_ARG_TYPE')
-    })
-  })
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.close())
 
-  await t.completed
+  for (const [chunk, expected] of cases) {
+    const { body } = await client.request({
+      path: '/',
+      method: 'POST',
+      body: (async function * () { yield chunk })()
+    })
+    assert.deepStrictEqual(Buffer.from(await body.arrayBuffer()), expected, chunk.constructor.name)
+  }
 })
 
 test('async iterator yield object error', async (t) => {
