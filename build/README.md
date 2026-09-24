@@ -9,7 +9,11 @@ produced different artifacts. A missing or failing optimizer now fails the build
 The generated C and header in `deps/llhttp` come from llhttp
 [`release/v9.4.3`](https://github.com/nodejs/llhttp/tree/0e815792b167a9bd8ace259b95b7da953776c288)
 (commit `0e815792b167a9bd8ace259b95b7da953776c288`), with trailing whitespace
-removed from five generated blank lines. Keep the constants in
+removed from five generated blank lines. The relaxed header-value WASM SIMD
+range comparisons are patched to use unsigned lanes: the upstream signed
+comparison against `0xff` otherwise makes no progress on valid header bytes.
+The relaxed path also rejects NUL instead of retrying the same invalid byte.
+Keep these patches when regenerating from 9.4.3. Keep the constants in
 `lib/llhttp/constants.js` in sync with the release when updating the parser.
 
 To check reproducibility, run the build twice and check that the four generated

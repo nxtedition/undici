@@ -2362,18 +2362,18 @@ static llparse_state_t llhttp__internal__run(
         input = wasm_v128_load(p);
         /* Find first character that does not match `ranges` */
         single = wasm_v128_and(
-          wasm_i8x16_ge(input, wasm_u8x16_const_splat(0x1)),
-          wasm_i8x16_le(input, wasm_u8x16_const_splat(0x9))
+          wasm_u8x16_ge(input, wasm_u8x16_const_splat(0x1)),
+          wasm_u8x16_le(input, wasm_u8x16_const_splat(0x9))
         );
         mask = single;
         single = wasm_v128_and(
-          wasm_i8x16_ge(input, wasm_u8x16_const_splat(0xb)),
-          wasm_i8x16_le(input, wasm_u8x16_const_splat(0xc))
+          wasm_u8x16_ge(input, wasm_u8x16_const_splat(0xb)),
+          wasm_u8x16_le(input, wasm_u8x16_const_splat(0xc))
         );
         mask = wasm_v128_or(mask, single);
         single = wasm_v128_and(
-          wasm_i8x16_ge(input, wasm_u8x16_const_splat(0xe)),
-          wasm_i8x16_le(input, wasm_u8x16_const_splat(0xff))
+          wasm_u8x16_ge(input, wasm_u8x16_const_splat(0xe)),
+          wasm_u8x16_le(input, wasm_u8x16_const_splat(0xff))
         );
         mask = wasm_v128_or(mask, single);
         match_len = __builtin_ctz(
@@ -8435,6 +8435,10 @@ static llparse_state_t llhttp__internal__run(
   s_n_llhttp__internal__n_invoke_test_lenient_flags_20: {
     switch (llhttp__internal__c_test_lenient_flags_20(state, p, endp)) {
       case 1:
+        /* NUL is invalid even in relaxed mode; do not retry the same byte. */
+        if (*p == '\0') {
+          goto s_n_llhttp__internal__n_span_end_llhttp__on_header_value_3;
+        }
         goto s_n_llhttp__internal__n_header_value_relaxed;
       default:
         goto s_n_llhttp__internal__n_span_end_llhttp__on_header_value_3;
