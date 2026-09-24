@@ -100,7 +100,6 @@ test('dump disposes structural AbortSignal listener on close', async () => {
   const signal = {
     aborted: false,
     reason: undefined,
-    throwIfAborted () {},
     addEventListener (...args) {
       target.addEventListener(...args)
     },
@@ -126,6 +125,14 @@ test('dump reports an invalid signal by rejecting, not throwing', async () => {
   await assert.rejects(dumped, { name: 'InvalidArgumentError' })
 })
 
+test('dump preserves a pre-aborted structural signal reason without throwIfAborted', async () => {
+  const reason = new Error('structural abort reason')
+  await assert.rejects(
+    createBody().dump({ signal: { aborted: true, reason } }),
+    err => err === reason
+  )
+})
+
 test('concurrent dumps apply the smallest limit', async () => {
   const body = createBody()
   const small = body.dump({ limit: 10 })
@@ -149,7 +156,7 @@ test('concurrent dumps apply the smallest limit', async () => {
 test('a failed dump setup does not lower a later dump limit', async (t) => {
   const body = createBody()
   t.after(() => body.destroy())
-  await assert.rejects(body.dump({ signal: { aborted: false, throwIfAborted () {} }, limit: 10 }))
+  await assert.rejects(body.dump({ signal: { aborted: false }, limit: 10 }))
 
   const dumped = body.dump({ limit: 1000 })
   body.push(Buffer.alloc(100))
