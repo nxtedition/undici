@@ -116,3 +116,31 @@ test('dump disposes structural AbortSignal listener on close', async () => {
   assert.strictEqual(await dumped, undefined)
   assert.strictEqual(removals, 1)
 })
+
+test('dump reports an invalid signal by rejecting, not throwing', async () => {
+  let dumped
+  assert.doesNotThrow(() => {
+    dumped = createBody().dump({ signal: {} })
+  })
+  await assert.rejects(dumped, { name: 'InvalidArgumentError' })
+})
+
+test('concurrent dumps apply the smallest limit', async () => {
+  const body = createBody()
+  const small = body.dump({ limit: 10 })
+  const large = body.dump({ limit: 1e6 })
+
+  // Past the small limit but far below the large one: the body is discarded
+  // without waiting for the rest.
+  body.push(Buffer.alloc(100))
+
+  let timer
+  await Promise.race([
+    Promise.all([small, large]),
+    new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('the larger limit kept the dump waiting')), 1e3)
+    })
+  ]).finally(() => clearTimeout(timer))
+  assert.strictEqual(body.destroyed, true)
+  assert.strictEqual(body.readableEnded, false)
+})
