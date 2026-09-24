@@ -17,7 +17,7 @@ const {
   kSize,
   kUrl
 } = require('../lib/core/symbols')
-const { kClients } = require('../lib/dispatcher/pool-base')
+const { kClients, kRetiring } = require('../lib/dispatcher/pool-base')
 const {
   Client,
   Pool,
@@ -1419,4 +1419,28 @@ test('pool.close() tracks a connection error after shutdown starts', async (t) =
     new Promise(resolve => socket.once('close', resolve))
   ))), 'close() left a connection open')
   assert.strictEqual(serverSockets.size, 0)
+})
+
+test('pool.destroy() during close() releases a retiring client', async (t) => {
+  let received
+  const requestReceived = new Promise((resolve) => { received = resolve })
+  // Never respond: the detached client holds its request until destroyed.
+  const { pool } = await detachedClientPool(t, () => received())
+
+  const settled = pool.request({ path: '/hang', method: 'GET' }).then(
+    () => null,
+    (err) => err
+  )
+  await withTimeout(requestReceived, 'the detached client never reconnected')
+  assert.strictEqual(pool[kRetiring].size, 1)
+
+  // close() waits on the retiring client; destroy() must settle that wait
+  // too, not only abort the request.
+  const closing = pool.close().then(() => null, (err) => err)
+  await pool.destroy()
+
+  assert.ok(await withTimeout(settled, 'the request never settled') instanceof errors.ClientDestroyedError)
+  assert.strictEqual(await withTimeout(closing, 'close() never settled after destroy()'), null)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.strictEqual(pool[kRetiring].size, 0, 'the destroyed client is no longer tracked')
 })
