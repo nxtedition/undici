@@ -1355,6 +1355,11 @@ test('pool.destroy() reaches a detached client that is finishing its own request
   // Never respond, so the request stays in flight on the detached client.
   const { pool, serverSockets } = await detachedClientPool(t, () => received())
 
+  pool.once('connectionError', () => {
+    assert.strictEqual(pool.stats.pending, 1, 'the detached request is still pending')
+    assert.strictEqual(pool.stats.size, 1, 'the detached request remains owned')
+  })
+
   const settled = pool.request({ path: '/hang', method: 'GET' }).then(
     () => null,
     (err) => err
@@ -1362,6 +1367,11 @@ test('pool.destroy() reaches a detached client that is finishing its own request
 
   await withTimeout(requestReceived, 'the detached client never reconnected')
   assert.strictEqual(serverSockets.size, 1)
+  assert.strictEqual(pool.stats.connected, 1)
+  assert.strictEqual(pool.stats.pending, 0)
+  assert.strictEqual(pool.stats.running, 1)
+  assert.strictEqual(pool.stats.size, 1)
+  assert.strictEqual(pool.stats.free, 0, 'a retiring client cannot accept new work')
   const socketClosed = new Promise((resolve) => [...serverSockets][0].once('close', resolve))
 
   await pool.destroy()
@@ -1369,6 +1379,9 @@ test('pool.destroy() reaches a detached client that is finishing its own request
   const err = await withTimeout(settled, 'the request never settled after pool.destroy()')
   assert.ok(err instanceof errors.ClientDestroyedError)
   await withTimeout(socketClosed, 'pool.destroy() left the detached connection open')
+  assert.strictEqual(pool.stats.connected, 0)
+  assert.strictEqual(pool.stats.running, 0)
+  assert.strictEqual(pool.stats.size, 0)
 })
 
 test('pool.close() waits for a detached client to finish its own request', async (t) => {
@@ -1390,4 +1403,20 @@ test('pool.close() waits for a detached client to finish its own request', async
   respond()
   assert.strictEqual(await withTimeout(response, 'the request never completed'), 'done')
   await withTimeout(closing, 'close() never resolved')
+})
+
+test('pool.close() tracks a connection error after shutdown starts', async (t) => {
+  const { pool, serverSockets } = await detachedClientPool(t, (req, res) => res.end('done'))
+  const response = pool.request({ path: '/retry', method: 'GET' }).then(({ body }) => body.text())
+  // The initial connector failure is queued on nextTick. Start closing first,
+  // so detachment and any replacement creation happen after the close snapshot.
+  const closing = pool.close()
+
+  assert.strictEqual(await withTimeout(response, 'the request never completed'), 'done')
+  await withTimeout(closing, 'close() never resolved')
+  assert.ok(pool[kClients].every(client => client.destroyed))
+  await withTimeout(Promise.all([...serverSockets].map(socket => (
+    new Promise(resolve => socket.once('close', resolve))
+  ))), 'close() left a connection open')
+  assert.strictEqual(serverSockets.size, 0)
 })
