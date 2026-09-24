@@ -144,3 +144,18 @@ test('concurrent dumps apply the smallest limit', async () => {
   assert.strictEqual(body.destroyed, true)
   assert.strictEqual(body.readableEnded, false)
 })
+
+test('a failed dump setup does not lower a later dump limit', async (t) => {
+  const body = createBody()
+  t.after(() => body.destroy())
+  await assert.rejects(body.dump({ signal: { aborted: false }, limit: 10 }))
+
+  const dumped = body.dump({ limit: 1000 })
+  body.push(Buffer.alloc(100))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.strictEqual(body.destroyed, false)
+
+  body.push(null)
+  await dumped
+  assert.strictEqual(body.readableEnded, true)
+})
