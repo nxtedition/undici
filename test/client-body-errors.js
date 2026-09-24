@@ -646,6 +646,34 @@ test('an errored, closed stream body fails the request with its error', async (t
   assert.strictEqual(requests, 0, 'nothing was sent')
 })
 
+for (const consumed of [false, true]) {
+  test(`a cancelled, closed stream body rejects before dispatch (partially consumed: ${consumed})`, async (t) => {
+    let connections = 0
+    const client = new Client('http://localhost', {
+      connect () {
+        connections++
+        throw new Error('cancelled body must not open a connection')
+      }
+    })
+    t.after(() => client.destroy())
+
+    const body = new Readable({ read () {} })
+    body.push('unfinished upload')
+    if (consumed) assert.ok(body.read(1))
+    const closed = once(body, 'close')
+    body.destroy()
+    await closed
+    assert.strictEqual(body.readableEnded, false)
+    assert.strictEqual(body.errored, null)
+
+    await assert.rejects(
+      withTimeout(client.request({ path: '/', method: 'PUT', body }), 5e3, 'request did not settle'),
+      errors.RequestAbortedError
+    )
+    assert.strictEqual(connections, 0)
+  })
+}
+
 test('a cleanly finished, closed stream body is sent as an empty body', async (t) => {
   const received = []
   const server = createServer(async (req, res) => {
@@ -663,7 +691,7 @@ test('a cleanly finished, closed stream body is sent as an empty body', async (t
   const client = new Client(`http://localhost:${server.address().port}`)
   t.after(() => client.destroy())
 
-  const body = Readable.from([])
+  const body = Readable.from(['already consumed'])
   body.resume()
   await new Promise((resolve) => body.once('close', resolve))
 
