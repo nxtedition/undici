@@ -116,3 +116,54 @@ test('dump disposes structural AbortSignal listener on close', async () => {
   assert.strictEqual(await dumped, undefined)
   assert.strictEqual(removals, 1)
 })
+
+test('dump reports an invalid signal by rejecting, not throwing', async () => {
+  let dumped
+  assert.doesNotThrow(() => {
+    dumped = createBody().dump({ signal: {} })
+  })
+  await assert.rejects(dumped, { name: 'InvalidArgumentError' })
+})
+
+test('dump preserves a pre-aborted structural signal reason without throwIfAborted', async () => {
+  const reason = new Error('structural abort reason')
+  await assert.rejects(
+    createBody().dump({ signal: { aborted: true, reason } }),
+    err => err === reason
+  )
+})
+
+test('concurrent dumps apply the smallest limit', async () => {
+  const body = createBody()
+  const small = body.dump({ limit: 10 })
+  const large = body.dump({ limit: 1e6 })
+
+  // Past the small limit but far below the large one: the body is discarded
+  // without waiting for the rest.
+  body.push(Buffer.alloc(100))
+
+  let timer
+  await Promise.race([
+    Promise.all([small, large]),
+    new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error('the larger limit kept the dump waiting')), 1e3)
+    })
+  ]).finally(() => clearTimeout(timer))
+  assert.strictEqual(body.destroyed, true)
+  assert.strictEqual(body.readableEnded, false)
+})
+
+test('a failed dump setup does not lower a later dump limit', async (t) => {
+  const body = createBody()
+  t.after(() => body.destroy())
+  await assert.rejects(body.dump({ signal: { aborted: false }, limit: 10 }))
+
+  const dumped = body.dump({ limit: 1000 })
+  body.push(Buffer.alloc(100))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.strictEqual(body.destroyed, false)
+
+  body.push(null)
+  await dumped
+  assert.strictEqual(body.readableEnded, true)
+})
