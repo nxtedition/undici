@@ -87,6 +87,7 @@ const { describe, test } = require('node:test')
           'llhttp_set_lenient_optional_crlf_after_chunk',
           'llhttp_set_lenient_optional_cr_before_lf',
           'llhttp_set_lenient_spaces_after_chunk_size',
+          'llhttp_set_lenient_header_value_relaxed',
           'llhttp_message_needs_eof'
         ])
         await t.completed
