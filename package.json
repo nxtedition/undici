@@ -77,7 +77,9 @@
     "test:types": "tsc -p test/types/tsconfig.json",
     "bench": "echo \"Error: Benchmarks have been moved to '/benchmarks'\" && exit 1",
     "serve:website": "echo \"Error: Documentation has been moved to '/docs'\" && exit 1",
-    "prepare": "husky"
+    "prepare": "husky",
+    "preversion": "node scripts/check-release-branch.js",
+    "prepublishOnly": "node scripts/check-release-branch.js"
   },
   "devDependencies": {
     "@matteo.collina/tspl": "^0.1.1",
