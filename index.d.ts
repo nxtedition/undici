@@ -10,19 +10,19 @@ export type URLInput = string | URL | UrlObject
 
 /**
  * A parsed header or trailer field section, keyed by lowercased field name.
- * This is what parseHeaders produces and what the transport hands to handlers.
+ * This is what the HTTP/1.1 parser produces and hands to handlers.
  *
  * Three guarantees, all of which let consumers copy or read one of these maps
  * without re-deriving the checks:
  *
- * 1. No value is nullish. parseHeaders only ever stores a latin1 string or an
+ * 1. No value is nullish. The parser only ever stores a latin1 string or an
  *    array of them — a repeated field line becomes the array.
  * 2. No own key is `__proto__`. It is a valid RFC 9110 field-name token, so a peer
- *    may send one, but parseHeaders drops it. Assigning that key onto a plain
+ *    may send one, but the parser drops it. Assigning that key onto a plain
  *    object invokes Object.prototype's setter, and for a repeated field line —
  *    whose value is an array — that replaces the target's prototype outright.
  * 3. Every own key is lowercased. Field names are case-insensitive (RFC 9110
- *    §5.1) and parseHeaders lowercases each one, so `h['content-type']` finds the
+ *    §5.1) and the parser lowercases each one, so `h['content-type']` finds the
  *    field however the peer spelled it, and two spellings of one name collapse
  *    into a single entry whose repeated values form an array — a consumer never
  *    has to lowercase a key, nor look for a second entry under another casing.
@@ -41,16 +41,14 @@ export type URLInput = string | URL | UrlObject
  * copy loops do) still gets through, and because a plain
  * Record<string, string | string[]> satisfies the optional member vacuously,
  * round-tripping a value through that wider type launders the guarantee. The
- * runtime drop in parseHeaders is what actually holds the line. A caller-supplied
- * accumulator must already satisfy these guarantees; existing properties are
- * preserved.
+ * runtime drop in the parser is what actually holds the line.
  *
  * Guarantee 3 is a producer contract. A `Lowercase<string>` index signature can
  * reject mixed-case literal keys, but also rejects ordinary string indexing,
  * including keys from Object.keys() and String#toLowerCase(). This type keeps
- * string indexing for consumers that read or copy maps dynamically. parseHeaders
- * normalizes incoming names; caller-supplied accumulators and maps synthesized
- * by custom dispatchers or interceptors must already have lowercased keys.
+ * string indexing for consumers that read or copy maps dynamically. The parser
+ * normalizes incoming names; maps synthesized by custom dispatchers or
+ * interceptors must already have lowercased keys.
  */
 export type HeaderMap = Record<string, string | string[]> & { __proto__?: never }
 
@@ -533,16 +531,6 @@ export namespace errors {
 
 export namespace util {
   function headerNameToString (value: string | Buffer): string
-
-  /**
-   * Lowercases raw field names and preserves individual values as Latin-1 strings.
-   * An accumulator must already satisfy HeaderMap and is updated in place.
-   * Repeated names can turn its existing string properties into arrays.
-   */
-  function parseHeaders (
-    headers: readonly (Buffer | string | readonly (Buffer | string)[])[],
-    object?: HeaderMap
-  ): HeaderMap
 }
 
 export interface TopLevelRequestOptions<TOpaque = null>

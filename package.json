@@ -65,7 +65,7 @@
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
-    "build:wasm": "node build/wasm.js --docker",
+    "build:wasm": "node build/wellknown-headers.js && node build/wasm.js --docker",
     "generate-pem": "node scripts/generate-pem.js",
     "lint": "eslint --cache",
     "lint:fix": "eslint --fix --cache",

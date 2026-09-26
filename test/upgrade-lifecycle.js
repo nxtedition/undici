@@ -44,7 +44,7 @@ for (const [method, upgrade, statusCode] of [
 
     assert.equal(body.listenerCount('end'), 2)
     assert.equal(body.listenerCount('error'), 2)
-    assert.equal(request.onUpgrade(statusCode, ['upgrade', 'websocket'], socket), result)
+    assert.equal(request.onUpgrade(statusCode, { upgrade: 'websocket' }, socket), result)
     assert.equal(request.completed, true)
     assert.equal(request.aborted, false)
     assert.equal(body.destroyed, false)
@@ -113,7 +113,7 @@ test('an aborted upgrade remains an error terminal', (t) => {
     onError (err) { errors.push(err) }
   })
   request.onConnect((err) => request.onError(err))
-  request.onUpgrade(101, [], null)
+  request.onUpgrade(101, {}, null)
 
   assert.deepEqual(errors, [failure])
   assert.equal(request.aborted, true)
@@ -134,7 +134,7 @@ test('a throwing upgrade handler releases body listeners and preserves its error
     onError () { assert.fail('the transport owns the handler error') }
   })
 
-  assert.throws(() => request.onUpgrade(101, [], null), (err) => err === failure)
+  assert.throws(() => request.onUpgrade(101, {}, null), (err) => err === failure)
   assert.equal(request.completed, false)
   assert.equal(body.listenerCount('end'), 0)
   assert.equal(body.listenerCount('error'), 0)
