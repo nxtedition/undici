@@ -33,9 +33,24 @@ function setup (t) {
   return work
 }
 
-function check (cwd) {
-  const { status, stderr } = spawnSync(process.execPath, [script, cwd], { encoding: 'utf8' })
+function check (cwd, ...flags) {
+  const { status, stderr } = spawnSync(process.execPath, [script, ...flags, cwd], { encoding: 'utf8' })
   return { status, stderr }
+}
+
+// What `npm version 1.0.1` leaves behind: a commit bumping package.json on top
+// of origin/master, tagged v1.0.1, not pushed yet.
+function versionCommit (work, { tag = 'v1.0.1', extraFile } = {}) {
+  writeFileSync(join(work, 'package.json'), '{"version":"1.0.1"}\n')
+  git(work, 'add', 'package.json')
+  if (extraFile) {
+    writeFileSync(join(work, extraFile), 'x\n')
+    git(work, 'add', extraFile)
+  }
+  git(work, 'commit', '--quiet', '--no-verify', '-m', '1.0.1')
+  if (tag) {
+    git(work, 'tag', '-a', tag, '-m', '1.0.1')
+  }
 }
 
 test('release guard passes on a clean master that matches origin', (t) => {
@@ -65,4 +80,45 @@ test('release guard rejects a master that is not origin/master', (t) => {
   const { status, stderr } = check(work)
   assert.equal(status, 1)
   assert.match(stderr, /is not origin\/master/)
+})
+
+test('publishing accepts the tagged version commit npm version just made', (t) => {
+  const work = setup(t)
+  versionCommit(work)
+  assert.deepEqual(check(work, '--publish'), { status: 0, stderr: '' })
+})
+
+test('versioning still requires HEAD to be origin/master', (t) => {
+  const work = setup(t)
+  versionCommit(work)
+  const { status, stderr } = check(work)
+  assert.equal(status, 1)
+  assert.match(stderr, /is not origin\/master/)
+})
+
+test('publishing rejects an untagged version commit', (t) => {
+  const work = setup(t)
+  versionCommit(work, { tag: null })
+  const { status, stderr } = check(work, '--publish')
+  assert.equal(status, 1)
+  assert.match(stderr, /nor a tagged version commit/)
+})
+
+test('publishing rejects a tag that does not match package.json', (t) => {
+  const work = setup(t)
+  versionCommit(work, { tag: 'v9.9.9' })
+  assert.equal(check(work, '--publish').status, 1)
+})
+
+test('publishing rejects a version commit that changes other files', (t) => {
+  const work = setup(t)
+  versionCommit(work, { extraFile: 'index.js' })
+  assert.equal(check(work, '--publish').status, 1)
+})
+
+test('publishing rejects a version commit that is not directly on origin/master', (t) => {
+  const work = setup(t)
+  git(work, 'commit', '--quiet', '--no-verify', '--allow-empty', '-m', 'local only')
+  versionCommit(work)
+  assert.equal(check(work, '--publish').status, 1)
 })
