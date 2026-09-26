@@ -79,7 +79,7 @@
     "serve:website": "echo \"Error: Documentation has been moved to '/docs'\" && exit 1",
     "prepare": "husky",
     "preversion": "node scripts/check-release-branch.js",
-    "prepublishOnly": "node scripts/check-release-branch.js"
+    "prepublishOnly": "node scripts/check-release-branch.js --publish"
   },
   "devDependencies": {
     "@matteo.collina/tspl": "^0.1.1",
