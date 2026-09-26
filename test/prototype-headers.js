@@ -309,3 +309,41 @@ test('a name cut after a well-known prefix is completed by the next read', async
   })
   assert.strictEqual(await body.text(), 'OK')
 })
+
+test('__proto__ is dropped however a read splits the field lines', async (t) => {
+  const response = Buffer.from([
+    'HTTP/1.1 200 OK',
+    '__proto__: a',
+    'Transfer-Encoding: chunked',
+    '__PROTO__: b',
+    '__Proto__: c',
+    'Constructor: built-in',
+    '',
+    '2',
+    'OK',
+    '0',
+    '__proto__: t1',
+    '__PROTO__: t2',
+    '',
+    ''
+  ].join('\r\n'))
+
+  // Cut once at every offset, so each name is split at each of its positions.
+  for (let split = 1; split < response.length; split++) {
+    const client = new Client('http://localhost', {
+      connect: connectChunks([response.subarray(0, split), response.subarray(split)])
+    })
+    t.after(() => client.destroy())
+
+    const { headers, trailers, body } = await client.request({ path: '/', method: 'GET' })
+
+    assert.strictEqual(await body.text(), 'OK')
+    for (const map of [headers, trailers]) {
+      assert.strictEqual(Object.getPrototypeOf(map), Object.prototype, `split ${split}`)
+      assert.strictEqual(Object.getOwnPropertyDescriptor(map, '__proto__'), undefined, `split ${split}`)
+    }
+    assert.deepStrictEqual(headers, { 'transfer-encoding': 'chunked', constructor: 'built-in' })
+    assert.deepStrictEqual(trailers, {})
+    await client.close()
+  }
+})
