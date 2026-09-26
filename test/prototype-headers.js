@@ -4,7 +4,8 @@ const { test } = require('node:test')
 const assert = require('node:assert')
 const { promisify } = require('node:util')
 const net = require('node:net')
-const { Client, Dispatcher } = require('..')
+const { Duplex } = require('node:stream')
+const { Client, Dispatcher, errors } = require('..')
 
 function createRawServer (response) {
   return net.createServer((socket) => {
@@ -12,6 +13,34 @@ function createRawServer (response) {
       socket.end(response)
     })
   })
+}
+
+// Answers the request with the given chunks, one per read, so llhttp hands
+// over any field name or value cut by a chunk boundary in pieces.
+function connectChunks (chunks, { end = false } = {}) {
+  return (opts, callback) => {
+    const socket = new Duplex({
+      read () {},
+      write (chunk, encoding, cb) {
+        cb()
+        let i = 0
+        const push = () => {
+          if (i < chunks.length) {
+            socket.push(chunks[i++])
+            setImmediate(push)
+          } else if (end) {
+            socket.push(null)
+          }
+        }
+        push()
+      }
+    })
+    callback(null, socket)
+  }
+}
+
+function connectBytewise (response, options) {
+  return connectChunks(Array.from(response, (byte) => Buffer.from([byte])), options)
 }
 
 test('request drops a __proto__ response header and keeps other shadowing names', async (t) => {
@@ -209,4 +238,74 @@ test('request drops __proto__ from synthesized trailers', async () => {
   assert.strictEqual(Object.hasOwn(trailers, '__proto__'), false)
   assert.strictEqual(Object.getPrototypeOf(trailers), Object.prototype)
   assert.strictEqual(trailers.constructor, 'built-in-trailer')
+})
+
+test('header map is assembled from field lines split across reads', async (t) => {
+  const response = Buffer.from([
+    'HTTP/1.1 200 OK',
+    'X-A: 1',
+    'CONTENT-LENGTH: 2',
+    'X-Header-Name-Longer-Than-One-Simd-Block: Long Value',
+    'x-a: 2',
+    'ToString: Str',
+    '__Proto__: dropped',
+    'X-A: 3',
+    '',
+    'OK'
+  ].join('\r\n'))
+
+  const client = new Client('http://localhost', { connect: connectBytewise(response) })
+  t.after(() => client.destroy())
+
+  const { statusCode, headers, body } = await client.request({ path: '/', method: 'GET' })
+
+  assert.strictEqual(statusCode, 200)
+  assert.deepStrictEqual(headers, {
+    'x-a': ['1', '2', '3'],
+    'content-length': '2',
+    'x-header-name-longer-than-one-simd-block': 'Long Value',
+    tostring: 'Str'
+  })
+  assert.strictEqual(await body.text(), 'OK')
+})
+
+test('a split upper-case Content-Length is tracked for early close', async (t) => {
+  const response = Buffer.from([
+    'HTTP/1.1 200 OK',
+    'CONTENT-LENGTH: 4',
+    'Connection: close',
+    '',
+    'OK'
+  ].join('\r\n'))
+
+  const client = new Client('http://localhost', { connect: connectBytewise(response, { end: true }) })
+  t.after(() => client.destroy())
+
+  const { body } = await client.request({ path: '/', method: 'GET' })
+
+  await assert.rejects(body.text(), errors.ResponseContentLengthMismatchError)
+})
+
+test('a name cut after a well-known prefix is completed by the next read', async (t) => {
+  // `Accept` and `Content` are cut where the first is a well-known name and the
+  // second is not; the header map must key the whole names.
+  const chunks = [
+    'HTTP/1.1 200 OK\r\nAccept',
+    '-Ranges: bytes\r\nContent',
+    '-Type: text/plain\r\nContent-Length: 2\r\nETAG',
+    ': "x"\r\n\r\nOK'
+  ].map((chunk) => Buffer.from(chunk))
+
+  const client = new Client('http://localhost', { connect: connectChunks(chunks) })
+  t.after(() => client.destroy())
+
+  const { headers, body } = await client.request({ path: '/', method: 'GET' })
+
+  assert.deepStrictEqual(headers, {
+    'accept-ranges': 'bytes',
+    'content-type': 'text/plain',
+    'content-length': '2',
+    etag: '"x"'
+  })
+  assert.strictEqual(await body.text(), 'OK')
 })

@@ -13,6 +13,13 @@ removed from five generated blank lines. The relaxed header-value WASM SIMD
 range comparisons are patched to use unsigned lanes: the upstream signed
 comparison against `0xff` otherwise makes no progress on valid header bytes.
 The relaxed path also rejects NUL instead of retrying the same invalid byte.
+The WASM glue in `src/api.c` lowercases each header-name span in place (with
+WASM SIMD in the SIMD build) and passes `wasm_on_header_field` the name's
+1-based index in `wellknownHeaderNames` (0 for other names), so the client
+builds its header map without lowercasing names in JavaScript and reuses a
+preallocated string for a well-known name. The lookup lives in the generated
+`src/undici_wellknown_headers.h`; `npm run build:wasm` regenerates it with
+`build/wellknown-headers.js` from `lib/core/constants.js`.
 Keep these patches when regenerating from 9.4.3. Keep the constants in
 `lib/llhttp/constants.js` in sync with the release when updating the parser.
 

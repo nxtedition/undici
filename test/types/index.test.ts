@@ -220,8 +220,6 @@ async function types () {
   connectingSocket.destroy()
 
   util.headerNameToString(Buffer.from('Content-Type')) satisfies string
-  const parsed = util.parseHeaders([Buffer.from('x-test'), Buffer.from('yes')], { existing: 'value' })
-  parsed.existing satisfies string | string[] | undefined
 
   const body = new Readable({
     resume () {},

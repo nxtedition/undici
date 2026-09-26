@@ -4,15 +4,6 @@ function headerMapTypes () {
   const headers: HeaderMap = { 'content-type': 'text/plain', 'set-cookie': ['a', 'b'] }
   headers satisfies IncomingHttpHeaders
 
-  util.parseHeaders(['x-test', ['a', 'b']] as const) satisfies HeaderMap
-  util.parseHeaders([], headers) satisfies HeaderMap
-  const accumulated = util.parseHeaders(['Existing', 'again', 'X-Test', 'yes'], { existing: 'value' })
-  accumulated satisfies HeaderMap
-  accumulated.existing satisfies string | string[] | undefined
-  accumulated['x-test'] satisfies string | string[] | undefined
-  // @ts-expect-error Accumulating can turn an existing string into an array.
-  accumulated.existing satisfies string
-
   // Dynamic reads and copies remain supported; producers must lowercase names.
   const copy: HeaderMap = {}
   for (const [key, value] of Object.entries(headers)) {
@@ -42,8 +33,10 @@ function headerMapTypes () {
   headers['__proto__'] = ['a', 'b'] // eslint-disable-line no-proto
 
   const historical: IncomingHttpHeaders = { 'x-test': undefined }
-  // @ts-expect-error Accumulators must already contain only non-nullish values.
-  util.parseHeaders([], historical)
+  // @ts-expect-error The historical spelling allows undefined values.
+  historical satisfies HeaderMap
+  // @ts-expect-error util.parseHeaders was removed.
+  util.parseHeaders([])
 
   undefinedValue satisfies HeaderMap
   nullValue satisfies HeaderMap
