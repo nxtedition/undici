@@ -1,8 +1,8 @@
 'use strict'
 
 // Finds HEADER_NAME_HASH_K and HEADER_NAME_HASH_M in lib/core/util.js: a hash
-// that places every name in wellknownResponseHeaderNames in its own of 256
-// slots, so stringifyHTTPHeader needs one compare to tell a well-known name.
+// that places every name in wellknownResponseHeaderNames in its own slot among
+// 256 slots, so stringifyHTTPHeader needs one compare to tell a well-known name.
 //
 // It tries K = 3, 5, 7, ... and, for each, every odd M, and prints the first
 // pair that works: the smallest M for the smallest K, whatever the number of
