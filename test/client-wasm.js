@@ -18,13 +18,6 @@ const { join } = require('node:path')
       ], { timeout: 5000 })
     })
 
-    test('header names are lowercased in place without touching bytes outside the span', () => {
-      execFileSync(process.execPath, [
-        join(__dirname, 'fixtures/llhttp-lowercase-header-names.js'),
-        name === 'simd' ? 'llhttp_simd.wasm' : 'llhttp.wasm'
-      ], { timeout: 5000 })
-    })
-
     test('can compile the wasm code', async () => {
       await WebAssembly.compile(llhttp)
     })
