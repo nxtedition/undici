@@ -10,8 +10,7 @@ import undici, {
   errors,
   getGlobalDispatcher,
   request,
-  setGlobalDispatcher,
-  util
+  setGlobalDispatcher
 } from '../..'
 import type { HeaderMap } from '../..'
 import undiciRequire = require('../..')
@@ -218,8 +217,6 @@ async function types () {
     }
   })
   connectingSocket.destroy()
-
-  util.headerNameToString(Buffer.from('Content-Type')) satisfies string
 
   const body = new Readable({
     resume () {},

@@ -1,4 +1,4 @@
-import { type HeaderMap, type IncomingHttpHeaders, util } from '../..'
+import { type HeaderMap, type IncomingHttpHeaders } from '../..'
 
 function headerMapTypes () {
   const headers: HeaderMap = { 'content-type': 'text/plain', 'set-cookie': ['a', 'b'] }
@@ -35,8 +35,6 @@ function headerMapTypes () {
   const historical: IncomingHttpHeaders = { 'x-test': undefined }
   // @ts-expect-error The historical spelling permits undefined stored values.
   historical satisfies HeaderMap
-  // @ts-expect-error Header sections are assembled directly by the parser.
-  util.parseHeaders([])
 
   undefinedValue satisfies HeaderMap
   nullValue satisfies HeaderMap

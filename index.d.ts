@@ -529,10 +529,6 @@ export namespace errors {
   }
 }
 
-export namespace util {
-  function headerNameToString (value: string | Buffer): string
-}
-
 export interface TopLevelRequestOptions<TOpaque = null>
   extends Omit<Dispatcher.RequestOptions<TOpaque>, 'origin' | 'path' | 'method'> {
   dispatcher?: Dispatcher
@@ -568,7 +564,6 @@ declare const Undici: {
   Readable: typeof Readable
   buildConnector: typeof buildConnector
   errors: typeof errors
-  util: typeof util
   setGlobalDispatcher: typeof setGlobalDispatcher
   getGlobalDispatcher: typeof getGlobalDispatcher
   request: typeof request
