@@ -299,41 +299,90 @@ test('stringifyHTTPHeader tells a well-known name from any other', () => {
   }
 })
 
-test('stringifyHTTPHeader compares the bytes when a name hashes like a well-known one', () => {
-  // hash = hash * 3 ^ byte, so a server can pick two adjacent bytes that give
-  // another name of the same length and hash. Only the byte compare tells it
-  // from the listed name.
+test('stringifyHTTPHeader compares words when a name has the same full hash', () => {
   const hash = (str) => {
     let h = 0
-    for (let i = 0; i < str.length; i++) {
-      h = Math.imul(h, 3) ^ str.charCodeAt(i)
+    for (let i = 0; i < str.length; i += 4) {
+      let word = 0
+      for (let j = 0; j < 4 && i + j < str.length; j++) {
+        word |= str.charCodeAt(i + j) << (j * 8)
+      }
+      h = Math.imul(h, 3) ^ word
     }
     return h
   }
-  const isUpper = (c) => c >= 0x41 && c <= 0x5a
+  const chars = "!#$%&'*+-.^_`|~0123456789abcdefghijklmnopqrstuvwxyz"
   let collisions = 0
-  for (const name of wellknownResponseHeaderNames) {
+  const eligible = wellknownResponseHeaderNames.filter(name => name.length > 4)
+  for (const name of eligible) {
     let input
-    let prefix = 0
-    for (let i = 0; i + 1 < name.length && input === undefined; i++) {
-      const x = Math.imul(prefix, 3)
-      const target = Math.imul(x ^ name.charCodeAt(i), 3) ^ name.charCodeAt(i + 1)
-      for (let c = 0x21; c < 0x7f && input === undefined; c++) {
-        const d = Math.imul(x ^ c, 3) ^ target
-        if (c !== name.charCodeAt(i) && !isUpper(c) && d >= 0 && d < 256 && !isUpper(d)) {
-          input = name.slice(0, i) + String.fromCharCode(c, d) + name.slice(i + 2)
-        }
+    const first = Buffer.from(name.slice(0, 4)).readInt32LE()
+    const second = Buffer.alloc(4)
+    second.write(name.slice(4, 8), 'latin1')
+    const target = Math.imul(first, 3) ^ second.readInt32LE()
+    for (const c of chars) {
+      if (c === name[0]) continue
+      const next = (first & ~0xff) | c.charCodeAt(0)
+      const replacement = Buffer.alloc(4)
+      replacement.writeInt32LE(target ^ Math.imul(next, 3))
+      const length = Math.min(4, name.length - 4)
+      if (replacement.subarray(length).some(byte => byte !== 0)) continue
+      const text = replacement.subarray(0, length).toString('latin1')
+      if ([...text].every(byte => chars.includes(byte))) {
+        input = c + name.slice(1, 4) + text + name.slice(8)
+        break
       }
-      prefix = x ^ name.charCodeAt(i)
     }
     if (input !== undefined) {
       assert.strictEqual(hash(input), hash(name))
-      const buf = Buffer.from(input, 'latin1')
-      assert.strictEqual(util.stringifyHTTPHeader(buf, 0, buf.length), input)
+      for (let offset = 0; offset < 4; offset++) {
+        const buf = Buffer.alloc(input.length + 8, 0x5a)
+        buf.write(input, offset, 'latin1')
+        const words = new Int32Array(buf.buffer, 0, buf.buffer.byteLength >>> 2)
+        assert.strictEqual(util.stringifyHTTPHeader(buf, offset, input.length, words), input)
+      }
       collisions++
     }
   }
-  assert.ok(collisions > wellknownResponseHeaderNames.length / 2, `${collisions} collisions`)
+  assert.ok(collisions > eligible.length / 2, `${collisions} collisions`)
+})
+
+test('stringifyHTTPHeader handles every alignment without changing neighboring bytes', () => {
+  const names = ['', 'X-Custom-Header', ...wellknownResponseHeaderNames]
+  for (const name of names) {
+    for (let skew = 0; skew < 4; skew++) {
+      for (let offset = 0; offset < 8; offset++) {
+        const backing = Buffer.alloc(name.length + 24, 0x5a)
+        const buf = backing.subarray(skew)
+        buf.write(name.toUpperCase(), offset, 'latin1')
+        const expected = Buffer.from(backing)
+        expected.write(name.toLowerCase(), skew + offset, 'latin1')
+        const words = new Int32Array(backing.buffer, 0, backing.buffer.byteLength >>> 2)
+        assert.strictEqual(util.stringifyHTTPHeader(buf, offset, name.length, words), name.toLowerCase())
+        assert.deepStrictEqual(backing, expected)
+      }
+    }
+  }
+})
+
+test('stringifyHTTPHeader lowercases only ASCII A-Z in every packed lane', () => {
+  for (let byte = 0; byte < 256; byte++) {
+    for (let lane = 0; lane < 4; lane++) {
+      for (let offset = 0; offset < 4; offset++) {
+        const buf = Buffer.alloc(16, 0x5a)
+        const input = Buffer.from([0x40, 0x41, 0x5a, 0x5b, 0xff, 0x61, 0x7f, 0x80])
+        input[lane] = byte
+        input[lane + 4] = byte
+        input.copy(buf, offset)
+        const expected = lowerASCII(input.toString('latin1'))
+        const words = new Int32Array(buf.buffer, 0, buf.buffer.byteLength >>> 2)
+        assert.strictEqual(util.stringifyHTTPHeader(buf, offset, input.length, words), expected, `byte ${byte}, lane ${lane}, offset ${offset}`)
+        assert.strictEqual(buf.subarray(offset, offset + input.length).toString('latin1'), expected)
+        assert.ok(buf.subarray(0, offset).every(value => value === 0x5a))
+        assert.ok(buf.subarray(offset + input.length).every(value => value === 0x5a))
+      }
+    }
+  }
 })
 
 test('stringifyHTTPHeader returns the preallocated string for every well-known name', () => {
@@ -344,9 +393,13 @@ test('stringifyHTTPHeader returns the preallocated string for every well-known n
     const { wellknownResponseHeaderNames } = require(${JSON.stringify(require.resolve('../../lib/core/constants'))})
     const decoded = []
     for (const name of wellknownResponseHeaderNames) {
-      const buf = Buffer.from(name.toUpperCase(), 'latin1')
-      if (!%IsInternalizedString(stringifyHTTPHeader(buf, 0, buf.length))) {
-        decoded.push(name)
+      for (let offset = 0; offset < 4; offset++) {
+        const buf = Buffer.alloc(name.length + 8)
+        buf.write(name.toUpperCase(), offset, 'latin1')
+        const words = new Int32Array(buf.buffer, 0, buf.buffer.byteLength >>> 2)
+        if (!%IsInternalizedString(stringifyHTTPHeader(buf, offset, name.length, words))) {
+          decoded.push(name + ':' + offset)
+        }
       }
     }
     if (%IsInternalizedString(stringifyHTTPHeader(Buffer.from('x-unknown-header'), 0, 16))) {

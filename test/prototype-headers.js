@@ -6,6 +6,7 @@ const { promisify } = require('node:util')
 const net = require('node:net')
 const { Duplex } = require('node:stream')
 const { Client, Dispatcher, errors } = require('..')
+const { kSocket, kParser } = require('../lib/core/symbols')
 
 function createRawServer (response) {
   return net.createServer((socket) => {
@@ -346,4 +347,59 @@ test('__proto__ is dropped however a read splits the field lines', async (t) => 
     assert.deepStrictEqual(trailers, {})
     await client.close()
   }
+})
+
+test('parser rebuilds its cached Int32Array after WASM memory grows', async (t) => {
+  const response = Buffer.from('HTTP/1.1 200 OK\r\nContent-Length: 0\r\nContent-Type: text/Plain\r\nETag: First\r\n\r\n')
+  const client = new Client('http://localhost', { connect: connectChunks([response]) })
+  t.after(() => client.destroy())
+
+  const first = await client.request({ path: '/', method: 'GET' })
+  await first.body.dump()
+  const { memory } = client[kSocket][kParser].llhttp
+  const oldBuffer = memory.buffer
+  memory.grow(1)
+  assert.strictEqual(oldBuffer.byteLength, 0)
+
+  const second = await client.request({ path: '/', method: 'GET' })
+  await second.body.dump()
+  assert.deepStrictEqual(second.headers, first.headers)
+  assert.strictEqual(second.headers['content-type'], 'text/Plain')
+})
+
+test('parser keeps empty and repeated empty values across field sections', async (t) => {
+  const response = Buffer.from([
+    'HTTP/1.1 103 Early Hints',
+    'X-Empty:',
+    '',
+    'HTTP/1.1 200 OK',
+    'Transfer-Encoding: chunked',
+    'X-Empty:',
+    'X-EMPTY: Filled',
+    'X-Empty:',
+    'X-Last:',
+    '',
+    '0',
+    'X-Trailer:',
+    'X-Trailer:',
+    '',
+    ''
+  ].join('\r\n'))
+  const client = new Client('http://localhost', { connect: connectBytewise(response) })
+  t.after(() => client.destroy())
+  const sections = []
+  await new Promise((resolve, reject) => {
+    client.dispatch({ path: '/', method: 'GET' }, {
+      onConnect () {},
+      onHeaders (statusCode, headers) { sections.push({ statusCode, headers }) },
+      onData () {},
+      onComplete (trailers) { sections.push({ trailers }); resolve() },
+      onError: reject
+    })
+  })
+  assert.deepStrictEqual(sections, [
+    { statusCode: 103, headers: { 'x-empty': '' } },
+    { statusCode: 200, headers: { 'transfer-encoding': 'chunked', 'x-empty': ['', 'Filled', ''], 'x-last': '' } },
+    { trailers: { 'x-trailer': ['', ''] } }
+  ])
 })
