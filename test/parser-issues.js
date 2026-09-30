@@ -153,8 +153,8 @@ test('parser fail', async (testContext) => {
 })
 
 test('rejects DEL inside a quoted chunk extension value', async (testContext) => {
-  // llhttp 9.3.1 no longer accepts 0x7F in a quoted chunk-ext value; it is
-  // not qdtext (RFC 9110 5.6.4).
+  // 0x7F is not qdtext (RFC 9110 5.6.4), so a quoted chunk-ext value must not
+  // hold one.
   const t = tspl(testContext, { plan: 2 })
   const resources = new globalThis.AsyncDisposableStack()
   testContext.after(() => resources.disposeAsync())
@@ -181,7 +181,7 @@ test('rejects DEL inside a quoted chunk extension value', async (testContext) =>
   // The status line and headers are valid; the chunk that follows is not.
   const err = await body.text().then(() => null, (err) => err)
   t.ok(err instanceof errors.HTTPParserError)
-  t.match(err.message, /chunk extensions quoted value/)
+  t.match(err.message, /chunk extension quoted value/)
 
   await t.completed
 })
@@ -284,7 +284,7 @@ test('split header value', async (testContext) => {
   await t.completed
 })
 
-test('refreshes wasm input view after reallocating parser buffer', async (testContext) => {
+test('refreshes the WASM input view after growing the input area', async (testContext) => {
   const t = tspl(testContext, { plan: 4 })
   const resources = new globalThis.AsyncDisposableStack()
   testContext.after(() => resources.disposeAsync())
@@ -352,14 +352,14 @@ test('refreshes wasm input view after reallocating parser buffer', async (testCo
   await t.completed
 })
 
-test('HTTPParserError carries the llhttp error code', async (testContext) => {
+test('HTTPParserError carries the parser error code', async (testContext) => {
   const t = tspl(testContext, { plan: 4 })
   const resources = new globalThis.AsyncDisposableStack()
   testContext.after(() => resources.disposeAsync())
 
   const responses = [
     ['HTTP/1.1 2x0 OK\r\n\r\n', 'HPE_INVALID_STATUS'],
-    ['HTT/1.1 200 OK\r\n\r\n', 'HPE_INVALID_CONSTANT']
+    ['HTT/1.1 200 OK\r\n\r\n', 'HPE_UNEXPECTED_CHARACTER']
   ]
 
   for (const [response, code] of responses) {
@@ -379,12 +379,12 @@ test('HTTPParserError carries the llhttp error code', async (testContext) => {
 })
 
 for (const [name, response, code] of [
-  ['bare LF in status line', 'HTTP/1.1 200 OK\nContent-Length: 0\r\n\r\n', 'HPE_CR_EXPECTED'],
-  ['CR CR after status line', 'HTTP/1.1 200 OK\r\rContent-Length: 0\r\n\r\n', 'HPE_STRICT'],
-  ['empty Transfer-Encoding', 'HTTP/1.1 200 OK\r\nTransfer-Encoding:\r\n\r\n', 'HPE_INVALID_TRANSFER_ENCODING'],
-  ['whitespace-only Transfer-Encoding', 'HTTP/1.1 200 OK\r\nTransfer-Encoding: \t\r\n\r\n', 'HPE_INVALID_TRANSFER_ENCODING']
+  ['bare LF in status line', 'HTTP/1.1 200 OK\nContent-Length: 0\r\n\r\n', 'HPE_UNEXPECTED_CHARACTER'],
+  ['CR CR after status line', 'HTTP/1.1 200 OK\r\rContent-Length: 0\r\n\r\n', 'HPE_UNEXPECTED_CHARACTER'],
+  ['empty Transfer-Encoding', 'HTTP/1.1 200 OK\r\nTransfer-Encoding:\r\n\r\n', 'HPE_UNEXPECTED_CHARACTER'],
+  ['whitespace-only Transfer-Encoding', 'HTTP/1.1 200 OK\r\nTransfer-Encoding: \t\r\n\r\n', 'HPE_UNEXPECTED_CHARACTER']
 ]) {
-  test(`llhttp rejects ${name}`, async (t) => {
+  test(`the parser rejects ${name}`, async (t) => {
     const resources = new globalThis.AsyncDisposableStack()
     t.after(() => resources.disposeAsync())
     const { server } = resources.use(createTrackedServer(socket => {
@@ -399,7 +399,7 @@ for (const [name, response, code] of [
   })
 }
 
-test('llhttp accepts a tab after Connection: close', async (t) => {
+test('the parser accepts a tab after Connection: close', async (t) => {
   const resources = new globalThis.AsyncDisposableStack()
   t.after(() => resources.disposeAsync())
   const { server } = resources.use(createTrackedServer(socket => {

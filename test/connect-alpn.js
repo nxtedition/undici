@@ -38,8 +38,8 @@ test('buildConnector returns its socket and reports null on callback errors', as
 //
 // This build only speaks HTTP/1.1. If the connector were to advertise `h2` in
 // the TLS ALPN list, an h2-capable server would negotiate h2 and its binary
-// frames would be fed to the HTTP/1.1 llhttp parser, surfacing as a cryptic
-// `HTTPParserError` ("Expected HTTP/") instead of a working connection. So the
+// frames would be fed to the HTTP/1.1 parser, surfacing as a cryptic
+// `HTTPParserError` instead of a working connection. So the
 // connector must ALWAYS advertise exactly `['http/1.1']`, even when `allowH2`
 // is (incorrectly) threaded through to it — e.g. nested inside `connect`.
 test('buildConnector never advertises h2 over ALPN', (t) => {

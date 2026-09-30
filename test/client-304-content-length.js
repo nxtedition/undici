@@ -180,8 +180,9 @@ test('preserves HEAD and 204 Content-Length handling', async (t) => {
   assert.strictEqual(headResponse.headers['content-length'], '5')
   assert.strictEqual(await readBody(headResponse.body), '')
 
-  const noContentResponse = await client.request({ path: '/no-content', method: 'GET' })
-  await assert.rejects(readBody(noContentResponse.body), {
-    code: 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH'
+  // A 204 cannot have content, so the parser rejects its Content-Length.
+  await assert.rejects(client.request({ path: '/no-content', method: 'GET' }), {
+    name: 'HTTPParserError',
+    code: 'HPE_UNEXPECTED_CONTENT_LENGTH'
   })
 })

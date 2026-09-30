@@ -1,46 +1,60 @@
-# Rebuilding llhttp
+# The HTTP/1.1 parser
 
-Run `npm run build:wasm` with Docker available. The build uses the immutable
-images in `build/Dockerfile`: Node.js 26.7.0, Clang 17.0.6, wasi-sdk 21 and
-Binaryen 116. Docker always targets Linux/amd64, including on ARM hosts. The
-upstream v0.0.9 ARM64 image lacks Binaryen 116; silently skipping optimization
-produced different artifacts. A missing or failing optimizer now fails the build.
-
-The generated C and header in `deps/llhttp` come from llhttp
-[`release/v9.4.3`](https://github.com/nodejs/llhttp/tree/0e815792b167a9bd8ace259b95b7da953776c288)
-(commit `0e815792b167a9bd8ace259b95b7da953776c288`), with trailing whitespace
-removed from five generated blank lines. The relaxed header-value WASM SIMD
-range comparisons are patched to use unsigned lanes: the upstream signed
-comparison against `0xff` otherwise makes no progress on valid header bytes.
-The relaxed path also rejects NUL instead of retrying the same invalid byte.
-The WASM glue in `src/api.c` lowercases each header-name span in place (with
-WASM SIMD in the SIMD build) and passes `wasm_on_header_field` the name's
-1-based index in `wellknownHeaderNames` (0 for other names), so the client
-builds its header map without lowercasing names in JavaScript and reuses a
-preallocated string for a well-known name. The lookup lives in the generated
-`src/undici_wellknown_headers.h`; `npm run build:wasm` regenerates it with
-`build/wellknown-headers.js` from `lib/core/constants.js`.
-Keep these patches when regenerating from 9.4.3. Keep the constants in
-`lib/llhttp/constants.js` in sync with the release when updating the parser.
-
-To check reproducibility, run the build twice and check that the four generated
-files in `lib/llhttp` are unchanged on the second run:
+Responses are parsed by [milo](https://github.com/ShogunPanda/milo), a Rust
+HTTP/1.1 parser compiled to WebAssembly. `lib/milo` is an unmodified copy of the
+[`@perseveranza-pets/milo-cjs`](https://www.npmjs.com/package/@perseveranza-pets/milo-cjs)
+0.8.0 package. To refresh it, bump the version in `build/milo.js` and run:
 
 ```sh
-npm run build:wasm
-sha256sum lib/llhttp/*.wasm lib/llhttp/*-wasm.js > /tmp/llhttp.sha256
-npm run build:wasm
-sha256sum -c /tmp/llhttp.sha256
+npm run build:milo
 ```
 
-The same toolchain also reproduces the previously committed llhttp 9.3.1 WASM
-files and JavaScript wrappers byte for byte. Its WASM SHA-256 hashes are:
+`MILO_PACKAGE_DIR=<dir> npm run build:milo` copies an unpacked package instead,
+e.g. a local milo build.
 
-```text
-ab4573a06c43574936dc98c3943b10a4ee32798e9797329e9f327e5f64115f54  llhttp.wasm
-18403ee56fab07f89a845028bad358bb3ebcda213f8e2ec0989a991e9c33da69  llhttp_simd.wasm
-```
+The client loads `src/no-simd/index.js`, which embeds the scalar WASM build.
 
-For a native toolchain, invoke `node build/wasm.js` with `WASM_CC`, `WASM_CFLAGS`,
-`WASM_LDFLAGS`, `WASM_LDLIBS` and `WASM_OPT` as needed. Native toolchain overrides
-are supported but are not expected to reproduce the pinned Docker output.
+## Known issues in milo 0.8.0
+
+- The SIMD build is not used. Its wasm32 field scanners pass the operands of
+  `v128_andnot` in x86 order, so a 16-byte block of a header value, trailer
+  value or reason phrase is only checked for control bytes when it also holds
+  a CR, and a bare LF or a NUL inside a long header value is accepted.
+  `test/milo.js` fails if the loaded build accepts them.
+- For a field value that does not end in whitespace, milo drops only one
+  leading SP. The client strips the rest of the leading whitespace itself, but
+  a `Content-Length` sent after `":  "` or `": \t"` is rejected as
+  `HPE_INVALID_CONTENT_LENGTH` before it gets there.
+- The JS `dealloc()` drops the length the WASM export needs, so the client
+  never frees its input area; it grows by doubling instead.
+- The `should_upgrade` flag of a response ignores its status. The client
+  switches protocols on a 101 only, as it did with llhttp.
+
+## Differences from llhttp
+
+milo is stricter than the llhttp build it replaces:
+
+- HTTP/1.0 (and any version but HTTP/1.1) responses are rejected.
+- obs-fold, bare LF and bare CR are rejected anywhere in the head.
+- `Content-Length` is rejected on 1xx, 204 and 205 responses, and
+  `Transfer-Encoding` on 1xx, 204, 205 and 304 responses.
+- `Upgrade` without `Connection: upgrade`, and `Trailer` without chunked
+  encoding, are rejected.
+- Field values lose trailing whitespace as well as leading whitespace
+  (RFC 9110 5.5); llhttp kept it.
+- `HTTPParserError#code` is `HPE_` followed by a milo error name, such as
+  `HPE_UNEXPECTED_CHARACTER` or `HPE_INVALID_STATUS`.
+
+The client parses status codes below 100 as errors, and skips empty lines
+ahead of a status line, as it did with llhttp.
+
+milo reports what it parsed through a buffer of events once a call returns,
+and a parse error replaces the events of the call that hits it. The client runs
+the body decision in a call of its own, and consumes Content-Length bodies in
+JavaScript, so a response without a body or with a Content-Length completes
+before any byte after it is parsed. The last chunk of a chunked body is parsed
+together with what follows it in the same read, so a malformed byte there fails
+that response too.
+
+Each parser has a 64 KiB event buffer in WASM memory, so a connection holds one
+only while it parses a response and returns it to a shared pool in between.

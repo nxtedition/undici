@@ -5,7 +5,7 @@ const neo = require('neostandard')
 module.exports = [
   ...neo({
     ignores: [
-      'lib/llhttp'
+      'lib/milo'
     ],
     noJsx: true,
     ts: true

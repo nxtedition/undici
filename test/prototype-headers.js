@@ -15,8 +15,8 @@ function createRawServer (response) {
   })
 }
 
-// Answers the request with the given chunks, one per read, so llhttp hands
-// over any field name or value cut by a chunk boundary in pieces.
+// Answers the request with the given chunks, one per read, so a chunk boundary
+// can cut a field name or value.
 function connectChunks (chunks, { end = false } = {}) {
   return (opts, callback) => {
     const socket = new Duplex({

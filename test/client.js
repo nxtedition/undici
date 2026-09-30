@@ -1374,7 +1374,7 @@ test('multiple destroy callback', async (t) => {
 })
 
 // Regression tests for https://github.com/nodejs/undici/issues/5360: when a
-// response body applies backpressure the llhttp parser is left paused; if the
+// response body applies backpressure the parser is left paused; if the
 // peer then FINs, onHttpSocketEnd -> parser.finish() used to assert !paused and
 // crash the process. finish() must instead complete the paused parser. The body
 // is only consumed *after* the FIN (attaching just 'end'/'error' does not switch
