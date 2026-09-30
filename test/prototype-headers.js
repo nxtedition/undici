@@ -349,7 +349,7 @@ test('__proto__ is dropped however a read splits the field lines', async (t) => 
   }
 })
 
-test('parser rebuilds its cached Int32Array after WASM memory grows', async (t) => {
+test('parser refreshes its linear-memory buffer after WASM memory grows', async (t) => {
   const response = Buffer.from('HTTP/1.1 200 OK\r\nContent-Length: 0\r\nContent-Type: text/Plain\r\nETag: First\r\n\r\n')
   const client = new Client('http://localhost', { connect: connectChunks([response]) })
   t.after(() => client.destroy())

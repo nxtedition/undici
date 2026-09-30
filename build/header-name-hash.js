@@ -24,12 +24,8 @@ if (isMainThread) {
     for (let k = 3; ; k += 2) {
       const hashes = Int32Array.from(wellknownResponseHeaderNames, (name) => {
         let hash = 0
-        for (let i = 0; i < name.length; i += 4) {
-          let word = 0
-          for (let j = 0; j < 4 && i + j < name.length; j++) {
-            word |= name.charCodeAt(i + j) << (j * 8)
-          }
-          hash = Math.imul(hash, k) ^ word
+        for (let i = 0; i < name.length; i++) {
+          hash = Math.imul(hash, k) ^ name.charCodeAt(i)
         }
         return hash
       })
