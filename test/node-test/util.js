@@ -288,7 +288,8 @@ test('stringifyHTTPHeader tells a well-known name from any other', () => {
     const length = 1 + n % 40
     for (let i = 0; i < length; i++) {
       seed = (Math.imul(seed, 1103515245) + 12345) >>> 0
-      name += chars[seed % chars.length]
+      // The low six bits repeat every 64 steps; use higher bits for variety.
+      name += chars[(seed >>> 16) % chars.length]
     }
     inputs.push(name)
   }
