@@ -82,7 +82,7 @@ async function requestError (t, response) {
 
 const long = 'a'.repeat(20)
 
-// The SIMD build of milo 0.8.0 accepts these, see build/README.md.
+// Guard the SIMD scanner gaps in milo 0.8.0, see build/README.md.
 for (const [name, response] of [
   ['a bare LF in a header value', `HTTP/1.1 200 OK\r\nX-Long: ${long}\n${long}\r\nContent-Length: 0\r\n\r\n`],
   ['a NUL in a header value', `HTTP/1.1 200 OK\r\nX-Long: ${long}\0${long}\r\nContent-Length: 0\r\n\r\n`],
@@ -99,6 +99,21 @@ for (const [name, response] of [
     assert.strictEqual(err.code, 'HPE_UNEXPECTED_CHARACTER')
   })
 }
+
+test('SIMD validation preserves HTAB and obs-text in long field values', async (t) => {
+  const value = `${long}\t\x80\xff${long}`
+  const response = Buffer.from(
+    `HTTP/1.1 200 ${value}\r\nX-Long: ${value}\r\nTransfer-Encoding: chunked\r\n\r\n` +
+    `2\r\nok\r\n0\r\nX-Long: ${value}\r\n\r\n`,
+    'latin1'
+  )
+  const client = new Client('http://localhost', { connect: connectChunks([response]) })
+  t.after(() => client.destroy())
+  const { headers, body, trailers } = await client.request({ method: 'GET', path: '/' })
+  assert.strictEqual(headers['x-long'], value)
+  assert.strictEqual(await body.text(), 'ok')
+  assert.strictEqual(trailers['x-long'], value)
+})
 
 test('field values lose all surrounding whitespace', async (t) => {
   // milo 0.8.0 drops only one leading SP from a value that does not end in
