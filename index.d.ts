@@ -553,6 +553,13 @@ export function request<TOpaque = null> (
   callback: RequestCallback<TOpaque>
 ): void
 
+/**
+ * Decode an HTTP header-name byte range as Latin-1 and return its ASCII-lowercased
+ * spelling. ASCII uppercase bytes in the selected range are lowercased in place;
+ * bytes outside the range are unchanged. Known names reuse preallocated strings.
+ */
+export function headerNameToString (buffer: Buffer, byteOffset: number, byteLength: number): string
+
 export function setGlobalDispatcher (dispatcher: Dispatcher): void
 export function getGlobalDispatcher (): Dispatcher
 
@@ -564,6 +571,7 @@ declare const Undici: {
   Readable: typeof Readable
   buildConnector: typeof buildConnector
   errors: typeof errors
+  headerNameToString: typeof headerNameToString
   setGlobalDispatcher: typeof setGlobalDispatcher
   getGlobalDispatcher: typeof getGlobalDispatcher
   request: typeof request

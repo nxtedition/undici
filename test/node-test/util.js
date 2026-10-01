@@ -6,6 +6,7 @@ const { Readable, Stream } = require('node:stream')
 const { EventEmitter } = require('node:events')
 
 const util = require('../../lib/core/util')
+const { headerNameToString } = require('../..')
 const { execFileSync } = require('node:child_process')
 const { headerNameLowerCasedRecord, wellknownResponseHeaderNames } = require('../../lib/core/constants')
 const { InvalidArgumentError } = require('../../lib/core/errors')
@@ -356,4 +357,18 @@ test('stringifyHTTPHeader returns the preallocated string for every well-known n
   `
   const decoded = execFileSync(process.execPath, ['--allow-natives-syntax', '-e', script], { encoding: 'utf8' })
   assert.deepStrictEqual(JSON.parse(decoded), [])
+})
+
+test('public headerNameToString aliases the parser helper', async () => {
+  assert.strictEqual(headerNameToString, util.stringifyHTTPHeader)
+  const esm = await import('../../index.js')
+  assert.strictEqual(esm.headerNameToString, headerNameToString)
+  assert.strictEqual(esm.default.headerNameToString, headerNameToString)
+
+  const buffer = Buffer.from('!Content-Type?')
+  assert.strictEqual(headerNameToString(buffer, 1, 12), 'content-type')
+  assert.strictEqual(buffer.toString(), '!content-type?')
+  const custom = Buffer.from('X-Custom_^')
+  assert.strictEqual(headerNameToString(custom, 0, custom.length), 'x-custom_^')
+  assert.strictEqual(headerNameToString(Buffer.alloc(0), 0, 0), '')
 })
