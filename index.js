@@ -22,10 +22,6 @@ module.exports.Readable = Readable
 
 module.exports.buildConnector = buildConnector
 module.exports.errors = errors
-module.exports.util = {
-  parseHeaders: util.parseHeaders,
-  headerNameToString: util.headerNameToString
-}
 
 function makeDispatcher (fn) {
   return (url, opts, handler) => {
