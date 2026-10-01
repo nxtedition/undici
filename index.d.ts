@@ -246,7 +246,6 @@ export namespace Client {
     keepAliveTimeoutThreshold?: number
     socketPath?: string
     pipelining?: number
-    strictContentLength?: boolean
     maxCachedSessions?: number
     connect?: buildConnector.BuildOptions | buildConnector.Connector
     tls?: buildConnector.BuildOptions
