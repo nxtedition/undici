@@ -3,6 +3,8 @@
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { once } = require('node:events')
+const assert = require('node:assert/strict')
+const { setImmediate: waitImmediate } = require('node:timers/promises')
 const { Client } = require('..')
 const timers = require('../lib/util/timers')
 const { kConnect, kKeepAliveTimeoutValue } = require('../lib/core/symbols')
@@ -546,4 +548,27 @@ test('a changed Keep-Alive timeout on a reused connection is honoured', async (t
   t.strictEqual(client[kKeepAliveTimeoutValue], 3e3)
   t.strictEqual(responses, 2)
   await t.completed
+})
+
+test('reuses HEAD connections with repeated fragmented Connection fields', { timeout: 5000 }, async (t) => {
+  let connections = 0
+  const server = createServer(socket => {
+    connections++
+    socket.on('data', async () => {
+      socket.write('HTTP/1.0 200 OK\r\nConnection: x-token\r\nConnection: keep-')
+      await waitImmediate()
+      socket.write('alive\r\n\r\n')
+    })
+  })
+  t.after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(() => client.destroy())
+  for (let i = 0; i < 2; i++) {
+    const response = await client.request({ path: '/', method: 'HEAD', reset: false })
+    assert.deepEqual(response.headers.connection, ['x-token', 'keep-alive'])
+    await response.body.dump()
+  }
+  assert.equal(connections, 1)
 })
