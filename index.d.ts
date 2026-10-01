@@ -557,6 +557,8 @@ export function request<TOpaque = null> (
  * Decode an HTTP header-name byte range as Latin-1 and return its ASCII-lowercased
  * spelling. ASCII uppercase bytes in the selected range are lowercased in place;
  * bytes outside the range are unchanged. Known names reuse preallocated strings.
+ * Throws InvalidArgumentError unless offset and length are nonnegative safe
+ * integers describing a range within the Buffer.
  */
 export function headerNameToString (buffer: Buffer, byteOffset: number, byteLength: number): string
 

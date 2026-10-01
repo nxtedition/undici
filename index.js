@@ -22,7 +22,16 @@ module.exports.Readable = Readable
 
 module.exports.buildConnector = buildConnector
 module.exports.errors = errors
-module.exports.headerNameToString = util.stringifyHTTPHeader
+module.exports.headerNameToString = function headerNameToString (buffer, byteOffset, byteLength) {
+  if (!Buffer.isBuffer(buffer)) {
+    throw new InvalidArgumentError('buffer must be a Buffer')
+  }
+  if (!Number.isSafeInteger(byteOffset) || byteOffset < 0 || byteOffset > buffer.length ||
+      !Number.isSafeInteger(byteLength) || byteLength < 0 || byteLength > buffer.length - byteOffset) {
+    throw new InvalidArgumentError('offset and length must describe a valid Buffer byte range')
+  }
+  return util.stringifyHTTPHeader(buffer, byteOffset, byteLength)
+}
 
 function makeDispatcher (fn) {
   return (url, opts, handler) => {
