@@ -9,6 +9,7 @@ import undici, {
   buildConnector,
   errors,
   getGlobalDispatcher,
+  headerNameToString,
   request,
   setGlobalDispatcher
 } from '../..'
@@ -265,3 +266,12 @@ types satisfies () => Promise<void>
 
 // Keep this fixture a module even if imports are mechanically changed.
 export {}
+
+const headerNameBuffer = Buffer.from('Content-Type')
+headerNameToString(headerNameBuffer, 0, headerNameBuffer.length) satisfies string
+undici.headerNameToString(headerNameBuffer, 0, headerNameBuffer.length) satisfies string
+undiciRequire.headerNameToString(headerNameBuffer, 0, headerNameBuffer.length) satisfies string
+// @ts-expect-error the helper decodes a Buffer byte range, not a string
+headerNameToString('Content-Type', 0, 12)
+// @ts-expect-error offset and length are required
+headerNameToString(headerNameBuffer)

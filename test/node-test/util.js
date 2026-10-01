@@ -6,6 +6,7 @@ const { Readable, Stream } = require('node:stream')
 const { EventEmitter } = require('node:events')
 
 const util = require('../../lib/core/util')
+const { headerNameToString } = require('../..')
 const { execFileSync } = require('node:child_process')
 const { headerNameLowerCasedRecord, wellknownResponseHeaderNames } = require('../../lib/core/constants')
 const { InvalidArgumentError } = require('../../lib/core/errors')
@@ -356,4 +357,33 @@ test('stringifyHTTPHeader returns the preallocated string for every well-known n
   `
   const decoded = execFileSync(process.execPath, ['--allow-natives-syntax', '-e', script], { encoding: 'utf8' })
   assert.deepStrictEqual(JSON.parse(decoded), [])
+})
+
+test('public headerNameToString exports the parser conversion behavior', async () => {
+  const esm = await import('../../index.js')
+  assert.strictEqual(esm.headerNameToString, headerNameToString)
+  assert.strictEqual(esm.default.headerNameToString, headerNameToString)
+
+  const buffer = Buffer.from('!Content-Type?')
+  assert.strictEqual(headerNameToString(buffer, 1, 12), 'content-type')
+  assert.strictEqual(buffer.toString(), '!content-type?')
+  const custom = Buffer.from('X-Custom_^')
+  assert.strictEqual(headerNameToString(custom, 0, custom.length), 'x-custom_^')
+  assert.strictEqual(headerNameToString(Buffer.alloc(0), 0, 0), '')
+})
+
+test('public headerNameToString rejects invalid input without modifying the Buffer', () => {
+  const buffer = Buffer.from('ABC')
+  for (const value of [undefined, null, 'ABC', new Uint8Array(3)]) {
+    assert.throws(() => headerNameToString(value, 0, 3), InvalidArgumentError)
+  }
+  for (const value of [undefined, null, NaN, Infinity, -Infinity, -1, 0.5, Number.MAX_SAFE_INTEGER + 1, '1', 1n]) {
+    assert.throws(() => headerNameToString(buffer, value, 1), InvalidArgumentError)
+    assert.throws(() => headerNameToString(buffer, 0, value), InvalidArgumentError)
+  }
+  for (const [offset, length] of [[4, 0], [0, 4], [2, 2], [Number.MAX_SAFE_INTEGER, 1], [1, Number.MAX_SAFE_INTEGER]]) {
+    assert.throws(() => headerNameToString(buffer, offset, length), InvalidArgumentError)
+  }
+  assert.strictEqual(buffer.toString(), 'ABC')
+  assert.strictEqual(headerNameToString(buffer, buffer.length, 0), '')
 })
