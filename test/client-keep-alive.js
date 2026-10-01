@@ -550,25 +550,48 @@ test('a changed Keep-Alive timeout on a reused connection is honoured', async (t
   await t.completed
 })
 
-test('reuses HEAD connections with repeated fragmented Connection fields', { timeout: 5000 }, async (t) => {
-  let connections = 0
-  const server = createServer(socket => {
-    connections++
-    socket.on('data', async () => {
-      socket.write('HTTP/1.0 200 OK\r\nConnection: x-token\r\nConnection: keep-')
-      await waitImmediate()
-      socket.write('alive\r\n\r\n')
+test('HEAD connection tokens preserve reuse and respect close', { timeout: 10000 }, async (t) => {
+  for (const [name, fields, expectedConnections] of [
+    ['repeated fragmented keep-alive', ['x-token', 'keep-alive'], 1],
+    ['keep-alive before another field', ['keep-alive', 'x-token'], 1],
+    ['comma-separated tokens and whitespace', ['x-token, \tKEEP-ALIVE\t '], 1],
+    ['close before keep-alive', ['close', 'keep-alive'], 2],
+    ['close after keep-alive', ['keep-alive', 'close'], 2],
+    ['close in a comma-separated list', ['keep-alive, CLOSE'], 2],
+    ['a longer token does not match', ['x-keep-alive'], 2]
+  ]) {
+    await t.test(name, async (t) => {
+      let connections = 0
+      const server = createServer(socket => {
+        connections++
+        let pending = ''
+        let responses = Promise.resolve()
+        socket.on('data', chunk => {
+          pending += chunk.toString()
+          while (pending.includes('\r\n\r\n')) {
+            pending = pending.slice(pending.indexOf('\r\n\r\n') + 4)
+            responses = responses.then(async () => {
+              const response = 'HTTP/1.0 200 OK\r\n' +
+                fields.map(value => `Connection: ${value}\r\n`).join('') + '\r\n'
+              // Split the final field value so token parsing also covers fragments.
+              const split = response.length - 7
+              socket.write(response.slice(0, split))
+              await waitImmediate()
+              socket.write(response.slice(split))
+            })
+          }
+        })
+      })
+      t.after(() => server.close())
+      server.listen(0)
+      await once(server, 'listening')
+      const client = new Client(`http://localhost:${server.address().port}`)
+      t.after(() => client.destroy())
+      for (let i = 0; i < 2; i++) {
+        const response = await client.request({ path: '/', method: 'HEAD', reset: false })
+        await response.body.dump()
+      }
+      assert.equal(connections, expectedConnections)
     })
-  })
-  t.after(() => server.close())
-  server.listen(0)
-  await once(server, 'listening')
-  const client = new Client(`http://localhost:${server.address().port}`)
-  t.after(() => client.destroy())
-  for (let i = 0; i < 2; i++) {
-    const response = await client.request({ path: '/', method: 'HEAD', reset: false })
-    assert.deepEqual(response.headers.connection, ['x-token', 'keep-alive'])
-    await response.body.dump()
   }
-  assert.equal(connections, 1)
 })
