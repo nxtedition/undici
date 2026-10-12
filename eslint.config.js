@@ -4,7 +4,10 @@ const neo = require('neostandard')
 
 module.exports = [
   ...neo({
+    // Only lint lib/ (minus the generated llhttp build).
     ignores: [
+      '*',
+      '!lib/',
       'lib/llhttp'
     ],
     noJsx: true,
