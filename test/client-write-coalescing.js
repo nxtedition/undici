@@ -154,3 +154,40 @@ test('interleaves large and small chunks in order', async (t) => {
     assert.ok(body.equals(expected), headers ? 'content-length' : 'chunked')
   }
 })
+
+test('later requests on a connection share its slab without overwriting earlier writes', async (t) => {
+  const server = await startEchoServer(t)
+
+  // Keep the views that the socket was given, without copying them, like a
+  // connector that holds on to written chunks would.
+  const written = []
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    connect (opts, callback) {
+      const socket = net.connect(Number(opts.port), opts.hostname)
+      const write = socket.write
+      socket.write = function (chunk, ...args) {
+        written.push(chunk)
+        return write.call(this, chunk, ...args)
+      }
+      socket.once('connect', () => callback(null, socket))
+      socket.once('error', (err) => callback(err, null))
+      return socket
+    }
+  })
+  t.after(() => client.close())
+
+  const snapshots = []
+  for (let i = 0; i < 3; i++) {
+    const body = await echo(client, (function * () {
+      yield `request ${i}`
+    })())
+    assert.strictEqual(body.toString(), `request ${i}`)
+    snapshots.push(written.map((chunk) => Buffer.from(chunk).toString('latin1')))
+  }
+
+  const slabs = new Set(written.filter(Buffer.isBuffer).map((chunk) => chunk.buffer))
+  assert.strictEqual(slabs.size, 1, 'requests should share one slab')
+  for (const snapshot of snapshots) {
+    assert.deepStrictEqual(written.slice(0, snapshot.length).map((chunk) => Buffer.from(chunk).toString('latin1')), snapshot)
+  }
+})
