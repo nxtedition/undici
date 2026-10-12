@@ -23,10 +23,34 @@ function body (records) {
   return buf
 }
 
+// The client reads TLS sockets from the default connector through onread
+// (SocketReader); a connector that drops onread leaves it reading the socket's
+// Readable side. Each test using startServer runs in both modes.
+const MODES = ['onread', 'readable']
+
+function testModes (name, fn) {
+  for (const mode of MODES) {
+    test(`${name} (${mode})`, (t) => fn(t, mode))
+  }
+}
+
+// Fails the socket with readError once its first bytes were received, as soon
+// as the client could otherwise read them (or, with afterRead, after it did).
+function failSocket (socket, readError, buffered) {
+  readError.buffered = buffered
+  const fail = () => socket.destroy(readError.error || Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET', syscall: 'read' }))
+  if (readError.afterRead) {
+    setImmediate(() => setImmediate(fail))
+  } else {
+    fail()
+  }
+}
+
 // Answers the first request with `head` + `data` in 1 KiB TLS records, written
 // at once so they reach the client together, and optionally resets the
 // connection (RST) as soon as the kernel has the last byte.
-async function startServer (t, { head, data, reset = false, readError, connectOptions, ...options }) {
+async function startServer (t, { mode, head, data, reset = false, readError, connectOptions, ...options }) {
+  assert.ok(MODES.includes(mode))
   const server = net.createServer((raw) => {
     const socket = new tls.TLSSocket(raw, { isServer: true, key, cert })
     socket.on('error', () => {})
@@ -47,18 +71,33 @@ async function startServer (t, { head, data, reset = false, readError, connectOp
   const client = new Client(`https://localhost:${server.address().port}`, {
     ...options,
     connect (opts, callback) {
+      assert.ok(opts.onread)
+      if (mode === 'readable') {
+        opts = { ...opts, onread: undefined }
+      } else if (readError) {
+        // Like the Readable side's 'readable' event, act on the next tick.
+        const { buffer, callback: onRead } = opts.onread
+        let received = 0
+        opts = {
+          ...opts,
+          onread: {
+            buffer,
+            callback (nread, buf) {
+              if (received === 0) {
+                process.nextTick(() => failSocket(this, readError, received))
+              }
+              received += nread
+              return onRead.call(this, nread, buf)
+            }
+          }
+        }
+      }
       connector(opts, (err, socket) => {
-        if (readError) {
+        if (readError && mode === 'readable') {
           socket?.on('readable', function onReadable () {
             if (this.readableLength > 0) {
               this.off('readable', onReadable)
-              readError.buffered = this.readableLength
-              const fail = () => this.destroy(readError.error || Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET', syscall: 'read' }))
-              if (readError.afterRead) {
-                setImmediate(() => setImmediate(fail))
-              } else {
-                fail()
-              }
+              failSocket(this, readError, this.readableLength)
             }
           })
         }
@@ -79,9 +118,10 @@ async function readChunks (body) {
   return chunks
 }
 
-test('TLS records that arrive together are parsed and delivered as one chunk', async (t) => {
+testModes('TLS records that arrive together are parsed and delivered as one chunk', async (t, mode) => {
   const data = body(256)
   const client = await startServer(t, {
+    mode,
     head: `HTTP/1.1 200 OK\r\ncontent-length: ${data.length}\r\n\r\n`,
     data
   })
@@ -95,9 +135,10 @@ test('TLS records that arrive together are parsed and delivered as one chunk', a
   assert.ok(chunks.length <= 32, `${chunks.length} chunks for 256 records`)
 })
 
-test('a close-delimited body is complete when the peer resets right after it', async (t) => {
+testModes('a close-delimited body is complete when the peer resets right after it', async (t, mode) => {
   const data = body(64)
   const client = await startServer(t, {
+    mode,
     head: 'HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n',
     data,
     reset: true
@@ -110,9 +151,10 @@ test('a close-delimited body is complete when the peer resets right after it', a
   assert.deepStrictEqual(Buffer.concat(chunks), data)
 })
 
-test('a content-length body is complete when the peer resets right after it', async (t) => {
+testModes('a content-length body is complete when the peer resets right after it', async (t, mode) => {
   const data = body(64)
   const client = await startServer(t, {
+    mode,
     head: `HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: ${data.length}\r\n\r\n`,
     data,
     reset: true
@@ -146,14 +188,14 @@ for (const highWaterMark of [undefined, 32 * 1024]) {
   })
 }
 
-test('bytes buffered before a socket read error are still parsed', async (t) => {
+testModes('bytes buffered before a socket read error are still parsed', async (t, mode) => {
   const data = body(64)
   const head = 'HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n'
   // Fail the socket with a read error as soon as the first record is buffered,
   // while the client's deferred read is still pending: the error must not drop
   // the bytes that arrived before it.
   const readError = {}
-  const client = await startServer(t, { head, data, readError })
+  const client = await startServer(t, { mode, head, data, readError })
 
   const { statusCode, body: res } = await client.request({ path: '/', method: 'GET' })
   const chunks = await readChunks(res)
@@ -163,9 +205,10 @@ test('bytes buffered before a socket read error are still parsed', async (t) => 
   assert.deepStrictEqual(Buffer.concat(chunks), data.subarray(0, readError.buffered - head.length))
 })
 
-test('a local socket error does not drain a buffered response', async (t) => {
+testModes('a local socket error does not drain a buffered response', async (t, mode) => {
   const error = new Error('local abort')
   const client = await startServer(t, {
+    mode,
     head: 'HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n',
     data: Buffer.from('body'),
     readError: { error }
@@ -174,8 +217,9 @@ test('a local socket error does not drain a buffered response', async (t) => {
   await assert.rejects(client.request({ path: '/', method: 'GET' }), (err) => err === error)
 })
 
-test('a complete keep-alive chunked response survives a buffered read error', async (t) => {
+testModes('a complete keep-alive chunked response survives a buffered read error', async (t, mode) => {
   const client = await startServer(t, {
+    mode,
     head: 'HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n',
     data: Buffer.from('2\r\nok\r\n0\r\n\r\n'),
     readError: {}
@@ -185,8 +229,9 @@ test('a complete keep-alive chunked response survives a buffered read error', as
   assert.strictEqual(await res.text(), 'ok')
 })
 
-test('a successful response drain reconnects requests queued behind it', async (t) => {
+testModes('a successful response drain reconnects requests queued behind it', async (t, mode) => {
   const client = await startServer(t, {
+    mode,
     head: 'HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n',
     data: Buffer.from('ok'),
     readError: {}
@@ -199,8 +244,9 @@ test('a successful response drain reconnects requests queued behind it', async (
   assert.deepStrictEqual(await Promise.all(responses.map(({ body: res }) => res.text())), ['ok', 'ok'])
 })
 
-test('a response size limit still errors while draining a buffered read error', async (t) => {
+testModes('a response size limit still errors while draining a buffered read error', async (t, mode) => {
   const client = await startServer(t, {
+    mode,
     head: 'HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n',
     data: Buffer.from('too big'),
     readError: {},
@@ -211,8 +257,9 @@ test('a response size limit still errors while draining a buffered read error', 
   await assert.rejects(res.text(), { code: 'UND_ERR_RES_EXCEEDED_MAX_SIZE' })
 })
 
-test('a header size limit still errors while draining a buffered read error', async (t) => {
+testModes('a header size limit still errors while draining a buffered read error', async (t, mode) => {
   const client = await startServer(t, {
+    mode,
     head: `HTTP/1.1 200 OK\r\nx-long: ${'x'.repeat(128)}\r\nconnection: close\r\n\r\n`,
     data: Buffer.from('body'),
     readError: {},
@@ -222,8 +269,9 @@ test('a header size limit still errors while draining a buffered read error', as
   await assert.rejects(client.request({ path: '/', method: 'GET' }), { code: 'UND_ERR_HEADERS_OVERFLOW' })
 })
 
-test('an oversized trailer cannot complete a response during reset draining', async (t) => {
+testModes('an oversized trailer cannot complete a response during reset draining', async (t, mode) => {
   const client = await startServer(t, {
+    mode,
     head: 'HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n',
     data: Buffer.from(`2\r\nok\r\n0\r\nx-long: ${'x'.repeat(128)}\r\n\r\n`),
     readError: {},
@@ -236,9 +284,10 @@ test('an oversized trailer cannot complete a response during reset draining', as
 
 for (const afterRead of [false, true]) {
   for (const framing of ['content-length', 'chunked', 'close']) {
-    test(`a ${framing} response paused ${afterRead ? 'before' : 'during'} a read error preserves buffered bytes`, async (t) => {
+    testModes(`a ${framing} response paused ${afterRead ? 'before' : 'during'} a read error preserves buffered bytes`, async (t, mode) => {
       const data = Buffer.from('body')
       const client = await startServer(t, {
+        mode,
         head: 'HTTP/1.1 200 OK\r\n' + (framing === 'content-length'
           ? `content-length: ${data.length}\r\n\r\n`
           : framing === 'chunked' ? 'transfer-encoding: chunked\r\n\r\n' : 'connection: close\r\n\r\n'),
@@ -264,8 +313,9 @@ for (const afterRead of [false, true]) {
 }
 
 for (const framing of ['content-length', 'chunked']) {
-  test(`an incomplete ${framing} response still fails after a buffered read error`, async (t) => {
+  testModes(`an incomplete ${framing} response still fails after a buffered read error`, async (t, mode) => {
     const client = await startServer(t, {
+      mode,
       head: 'HTTP/1.1 200 OK\r\nconnection: close\r\n' + (framing === 'content-length'
         ? 'content-length: 8\r\n\r\n'
         : 'transfer-encoding: chunked\r\n\r\n'),
@@ -279,10 +329,11 @@ for (const framing of ['content-length', 'chunked']) {
 }
 
 for (const framing of ['content-length', 'chunked', 'close']) {
-  test(`a paused ${framing} response drains bytes beyond the capped batch`, async (t) => {
+  testModes(`a paused ${framing} response drains bytes beyond the capped batch`, async (t, mode) => {
     const data = Buffer.alloc(800, 0x61)
     const readError = {}
     const client = await startServer(t, {
+      mode,
       head: 'HTTP/1.1 200 OK\r\n' + (framing === 'content-length'
         ? `content-length: ${data.length}\r\n\r\n`
         : framing === 'chunked' ? 'transfer-encoding: chunked\r\n\r\n' : 'connection: close\r\n\r\n'),
@@ -300,8 +351,9 @@ for (const framing of ['content-length', 'chunked', 'close']) {
 }
 
 for (const method of ['GET', 'CONNECT']) {
-  test(`a destroyed socket cannot be handed off for ${method}`, async (t) => {
+  testModes(`a destroyed socket cannot be handed off for ${method}`, async (t, mode) => {
     const client = await startServer(t, {
+      mode,
       head: method === 'CONNECT' ? 'HTTP/1.1 200 OK\r\n\r\n' : 'HTTP/1.1 101 Switching Protocols\r\nconnection: upgrade\r\nupgrade: test\r\n\r\n',
       data: Buffer.from('upgraded data'),
       readError: {}
@@ -317,8 +369,9 @@ for (const method of ['GET', 'CONNECT']) {
   })
 }
 
-test('a handler failure while draining a buffered read error does not complete the response', async (t) => {
+testModes('a handler failure while draining a buffered read error does not complete the response', async (t, mode) => {
   const client = await startServer(t, {
+    mode,
     head: 'HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n',
     data: Buffer.from('body'),
     readError: {}
