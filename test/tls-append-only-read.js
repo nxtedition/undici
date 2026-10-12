@@ -404,7 +404,7 @@ for (const method of ['GET', 'CONNECT']) {
       const head = method === 'CONNECT'
         ? 'HTTP/1.1 200 OK\r\n\r\n'
         : 'HTTP/1.1 101 Switching Protocols\r\nconnection: upgrade\r\nupgrade: test\r\n\r\n'
-      const { port, holdAcrossAnswer } = await startWorkerServer(t, `(socket, index) => {
+      const { port } = await startWorkerServer(t, `(socket, index) => {
         const size = index === 0 ? ${earlySize} : ${lateSize}
         const data = Buffer.allocUnsafe(size)
         for (let i = 0; i < size; i += 4) data.writeUInt32LE(i + index, i)
@@ -416,6 +416,7 @@ for (const method of ['GET', 'CONNECT']) {
       }`)
       const connector = buildConnector({ ca, servername: 'agent1' })
       let stoppedBeforeUpgrade = false
+      let heldParser = false
       const client = newClient(t, port, {
         connect (opts, callback) {
           const { buffer, callback: onRead } = opts.onread
@@ -424,6 +425,20 @@ for (const method of ['GET', 'CONNECT']) {
             onread: {
               buffer,
               callback (nread, buf) {
+                const parser = this[kParser]
+                if (!heldParser && parser != null) {
+                  heldParser = true
+                  const readMore = parser.readMore
+                  // Hold parsing until native reads stop, independently of
+                  // how many TLS records the platform delivers per poll.
+                  parser.readMore = function () {
+                    if (this.reader.pending < MAX_PENDING) {
+                      return
+                    }
+                    this.readMore = readMore
+                    readMore.call(this)
+                  }
+                }
                 const result = onRead.call(this, nread, buf)
                 if (result === false && this[kParser]?.reader?.passThrough === false) {
                   stoppedBeforeUpgrade = true
@@ -438,7 +453,6 @@ for (const method of ['GET', 'CONNECT']) {
       const upgraded = upgrade(client, method === 'CONNECT'
         ? { path: 'localhost:443', method }
         : { path: '/', method, upgrade: 'test' })
-      holdAcrossAnswer()
       const { socket } = await upgraded
       assert.strictEqual(stoppedBeforeUpgrade, true, 'native reads stopped before handoff')
 
