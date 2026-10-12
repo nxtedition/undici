@@ -612,6 +612,32 @@ test('an upgrade in a filled slab hands over the bytes that follow in order', as
   assertBytes(chunks, pattern(size))
 })
 
+test('a caller-provided onread option keeps receiving socket bytes', async (t) => {
+  const data = pattern(64 * 1024)
+  const port = await startServer(t, (socket) => {
+    socket.write(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\ncontent-length: ${data.length}\r\n\r\n`), data]))
+  })
+  let calls = 0
+  const client = newClient(t, port, {
+    connect: {
+      ca,
+      servername: 'agent1',
+      onread: {
+        buffer: Buffer.allocUnsafeSlow(128 * 1024),
+        callback (nread, buf) {
+          calls++
+          return this.push(Buffer.copyBytesFrom(buf, 0, nread))
+        }
+      }
+    }
+  })
+
+  const { chunks } = await dispatch(client, { path: '/', method: 'GET' })
+  assertBytes(chunks, data)
+  assert.ok(calls > 0, 'the caller-provided callback received the response')
+  assert.strictEqual(readerOf(client), null)
+})
+
 test('a connector that drops onread is read through the Readable side', async (t) => {
   const data = pattern(64 * 1024)
   const port = await startServer(t, (socket) => {
