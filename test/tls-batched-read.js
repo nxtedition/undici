@@ -125,23 +125,26 @@ test('a content-length body is complete when the peer resets right after it', as
   assert.deepStrictEqual(Buffer.concat(chunks), data)
 })
 
-test('TLS sockets default to a 256 KiB readable highWaterMark', async (t) => {
-  const server = tls.createServer({ key, cert }, (socket) => socket.end())
-  server.listen(0)
-  await once(server, 'listening')
-  t.after(() => server.close())
+for (const highWaterMark of [undefined, 32 * 1024]) {
+  test(`TLS sockets preserve ${highWaterMark == null ? 'default' : 'custom'} read and write highWaterMarks`, async (t) => {
+    const server = tls.createServer({ key, cert }, (socket) => socket.end())
+    server.listen(0)
+    await once(server, 'listening')
+    t.after(() => server.close())
 
-  const connector = buildConnector({ ca, servername: 'agent1' })
-  const socket = await new Promise((resolve, reject) => {
-    connector({ hostname: 'localhost', host: 'localhost', protocol: 'https:', port: server.address().port }, (err, socket) => {
-      if (err) reject(err)
-      else resolve(socket)
+    const connector = buildConnector({ ca, servername: 'agent1', ...(highWaterMark == null ? {} : { highWaterMark }) })
+    const socket = await new Promise((resolve, reject) => {
+      connector({ hostname: 'localhost', host: 'localhost', protocol: 'https:', port: server.address().port }, (err, socket) => {
+        if (err) reject(err)
+        else resolve(socket)
+      })
     })
-  })
-  t.after(() => socket.destroy())
+    t.after(() => socket.destroy())
 
-  assert.strictEqual(socket.readableHighWaterMark, 256 * 1024)
-})
+    assert.strictEqual(socket.readableHighWaterMark, highWaterMark ?? 256 * 1024)
+    assert.strictEqual(socket.writableHighWaterMark, highWaterMark ?? 16 * 1024)
+  })
+}
 
 test('bytes buffered before a socket read error are still parsed', async (t) => {
   const data = body(64)
@@ -180,6 +183,20 @@ test('a complete keep-alive chunked response survives a buffered read error', as
 
   const { body: res } = await client.request({ path: '/', method: 'GET' })
   assert.strictEqual(await res.text(), 'ok')
+})
+
+test('a successful response drain reconnects requests queued behind it', async (t) => {
+  const client = await startServer(t, {
+    head: 'HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n',
+    data: Buffer.from('ok'),
+    readError: {}
+  })
+
+  const responses = await Promise.all([
+    client.request({ path: '/first', method: 'GET' }),
+    client.request({ path: '/second', method: 'GET' })
+  ])
+  assert.deepStrictEqual(await Promise.all(responses.map(({ body: res }) => res.text())), ['ok', 'ok'])
 })
 
 test('a response size limit still errors while draining a buffered read error', async (t) => {
