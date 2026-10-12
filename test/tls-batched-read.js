@@ -26,7 +26,7 @@ function body (records) {
 // Answers the first request with `head` + `data` in 1 KiB TLS records, written
 // at once so they reach the client together, and optionally resets the
 // connection (RST) as soon as the kernel has the last byte.
-async function startServer (t, { head, data, reset = false, readError, ...options }) {
+async function startServer (t, { head, data, reset = false, readError, connectOptions, ...options }) {
   const server = net.createServer((raw) => {
     const socket = new tls.TLSSocket(raw, { isServer: true, key, cert })
     socket.on('error', () => {})
@@ -43,7 +43,7 @@ async function startServer (t, { head, data, reset = false, readError, ...option
   await once(server, 'listening')
   t.after(() => server.close())
 
-  const connector = buildConnector({ ca, servername: 'agent1' })
+  const connector = buildConnector({ ca, servername: 'agent1', ...connectOptions })
   const client = new Client(`https://localhost:${server.address().port}`, {
     ...options,
     connect (opts, callback) {
@@ -275,6 +275,27 @@ for (const framing of ['content-length', 'chunked']) {
 
     const { body: res } = await client.request({ path: '/', method: 'GET' })
     await assert.rejects(res.text(), { code: framing === 'content-length' ? 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH' : 'HPE_INVALID_EOF_STATE' })
+  })
+}
+
+for (const framing of ['content-length', 'chunked', 'close']) {
+  test(`a paused ${framing} response drains bytes beyond the capped batch`, async (t) => {
+    const data = Buffer.alloc(800, 0x61)
+    const readError = {}
+    const client = await startServer(t, {
+      head: 'HTTP/1.1 200 OK\r\n' + (framing === 'content-length'
+        ? `content-length: ${data.length}\r\n\r\n`
+        : framing === 'chunked' ? 'transfer-encoding: chunked\r\n\r\n' : 'connection: close\r\n\r\n'),
+      data: framing === 'chunked'
+        ? Buffer.concat([Buffer.from(`${data.length.toString(16)}\r\n`), data, Buffer.from('\r\n0\r\n\r\n')])
+        : data,
+      readError,
+      connectOptions: { highWaterMark: 128 }
+    })
+
+    const { body: res } = await client.request({ path: '/', method: 'GET', highWaterMark: 1 })
+    assert.ok(readError.buffered > 128)
+    assert.deepStrictEqual(Buffer.concat(await readChunks(res)), data)
   })
 }
 
