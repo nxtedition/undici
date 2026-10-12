@@ -222,6 +222,18 @@ test('a header size limit still errors while draining a buffered read error', as
   await assert.rejects(client.request({ path: '/', method: 'GET' }), { code: 'UND_ERR_HEADERS_OVERFLOW' })
 })
 
+test('an oversized trailer cannot complete a response during reset draining', async (t) => {
+  const client = await startServer(t, {
+    head: 'HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: close\r\n\r\n',
+    data: Buffer.from(`2\r\nok\r\n0\r\nx-long: ${'x'.repeat(128)}\r\n\r\n`),
+    readError: {},
+    maxHeaderSize: 64
+  })
+
+  const { body: res } = await client.request({ path: '/', method: 'GET' })
+  await assert.rejects(res.text(), { code: 'UND_ERR_HEADERS_OVERFLOW' })
+})
+
 for (const afterRead of [false, true]) {
   for (const framing of ['content-length', 'chunked', 'close']) {
     test(`a ${framing} response paused ${afterRead ? 'before' : 'during'} a read error preserves buffered bytes`, async (t) => {
