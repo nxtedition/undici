@@ -198,7 +198,7 @@ test('later requests on a connection share its slab without overwriting earlier 
 })
 
 test('socket write failures abort the request without escaping from a deferred flush or cleanup', async (t) => {
-  for (const kind of ['iterable', 'stream', 'stream-error']) {
+  for (const kind of ['iterable', 'stream', 'stream-error', 'stream-error-without-prepend']) {
     await t.test(kind, async () => {
       // An uncaught nextTick exception must fail the child, rather than being
       // swallowed by the test runner's own exception handler.
@@ -232,7 +232,7 @@ test('socket write failures abort the request without escaping from a deferred f
                 await new Promise((resolve) => setImmediate(resolve))
                 yield 'second'
               })()
-            : kind === 'stream-error'
+            : kind.startsWith('stream-error')
               ? Object.assign(new EventEmitter(), {
                   pipe () {},
                   destroy () { this.destroyed = true; queueMicrotask(() => this.emit('close')) }
@@ -240,7 +240,8 @@ test('socket write failures abort the request without escaping from a deferred f
               : new Readable({ read () {} })
           if (kind === 'stream') {
             body.push('first')
-          } else if (kind === 'stream-error') {
+          } else if (kind.startsWith('stream-error')) {
+            if (kind === 'stream-error-without-prepend') body.prependListener = undefined
             body.resume = function () {
               this.emit('data', Buffer.from('first'))
               this.emit('error', bodyError)
@@ -248,7 +249,7 @@ test('socket write failures abort the request without escaping from a deferred f
           }
           try {
             await assert.rejects(client.request({ path: '/', method: 'POST', body }),
-              kind === 'stream-error' ? bodyError : writeError)
+              kind.startsWith('stream-error') ? bodyError : writeError)
             assert.equal(writes, 1)
             if (kind !== 'iterable') assert.equal(body.destroyed, true)
           } finally {
