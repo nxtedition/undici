@@ -320,12 +320,15 @@ test('large request headers do not create oversized connection slabs', async (t)
   t.after(() => server.close())
 
   const slabs = []
+  // A passthrough chunk can belong to the caller's larger Buffer pool. Only
+  // check buffers allocated by the coalescing writer itself.
+  const bodyChunk = Buffer.from('small body')
   const client = new Client(`http://localhost:${server.address().port}`, {
     connect (opts, callback) {
       const socket = net.connect(Number(opts.port), opts.hostname)
       const write = socket.write
       socket.write = function (chunk, ...args) {
-        if (Buffer.isBuffer(chunk)) slabs.push(chunk.buffer)
+        if (Buffer.isBuffer(chunk) && chunk !== bodyChunk) slabs.push(chunk.buffer)
         return write.call(this, chunk, ...args)
       }
       socket.once('connect', () => callback(null, socket))
@@ -335,8 +338,9 @@ test('large request headers do not create oversized connection slabs', async (t)
   })
   t.after(() => client.destroy())
 
-  const body = (function * () { yield Buffer.from('small body') })()
+  const body = (function * () { yield bodyChunk })()
   assert.strictEqual((await echo(client, body, { 'x-large': 'x'.repeat(70 * 1024) })).toString(), 'ok')
+  assert.strictEqual((await echo(client, (function * () { yield 'next request' })())).toString(), 'ok')
   assert.ok(slabs.length > 0)
   assert.ok(slabs.every((slab) => slab.byteLength <= 64 * 1024), 'connection slabs must stay within 64 KiB')
 })
