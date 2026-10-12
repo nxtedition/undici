@@ -1,0 +1,169 @@
+'use strict'
+
+const { test } = require('node:test')
+const assert = require('node:assert')
+const net = require('node:net')
+const tls = require('node:tls')
+const { readFileSync } = require('node:fs')
+const { join } = require('node:path')
+const { once } = require('node:events')
+const { Client, buildConnector } = require('..')
+
+const key = readFileSync(join(__dirname, 'fixtures', 'key.pem'), 'utf8')
+const cert = readFileSync(join(__dirname, 'fixtures', 'cert.pem'), 'utf8')
+const ca = readFileSync(join(__dirname, 'fixtures', 'ca.pem'), 'utf8')
+
+const RECORD_SIZE = 1024
+
+function body (records) {
+  const buf = Buffer.allocUnsafe(records * RECORD_SIZE)
+  for (let i = 0; i < records; i++) {
+    buf.fill(i & 0xff, i * RECORD_SIZE, (i + 1) * RECORD_SIZE)
+  }
+  return buf
+}
+
+// Answers the first request with `head` + `data` in 1 KiB TLS records, written
+// at once so they reach the client together, and optionally resets the
+// connection (RST) as soon as the kernel has the last byte.
+async function startServer (t, { head, data, reset = false }) {
+  const server = net.createServer((raw) => {
+    const socket = new tls.TLSSocket(raw, { isServer: true, key, cert })
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      assert.ok(socket.setMaxSendFragment(RECORD_SIZE))
+      socket.write(Buffer.concat([Buffer.from(head), data]), () => {
+        if (reset) {
+          raw.resetAndDestroy()
+        }
+      })
+    })
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  t.after(() => server.close())
+
+  const client = new Client(`https://localhost:${server.address().port}`, {
+    connect: { ca, servername: 'agent1' }
+  })
+  t.after(() => client.destroy())
+
+  return client
+}
+
+async function readChunks (body) {
+  const chunks = []
+  for await (const chunk of body) {
+    chunks.push(chunk)
+  }
+  return chunks
+}
+
+test('TLS records that arrive together are parsed and delivered as one chunk', async (t) => {
+  const data = body(256)
+  const client = await startServer(t, {
+    head: `HTTP/1.1 200 OK\r\ncontent-length: ${data.length}\r\n\r\n`,
+    data
+  })
+
+  const { statusCode, body: res } = await client.request({ path: '/', method: 'GET' })
+  const chunks = await readChunks(res)
+
+  assert.strictEqual(statusCode, 200)
+  assert.deepStrictEqual(Buffer.concat(chunks), data)
+  // One chunk per 1 KiB record without batching; a handful with it.
+  assert.ok(chunks.length <= 32, `${chunks.length} chunks for 256 records`)
+})
+
+test('a close-delimited body is complete when the peer resets right after it', async (t) => {
+  const data = body(64)
+  const client = await startServer(t, {
+    head: 'HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n',
+    data,
+    reset: true
+  })
+
+  const { statusCode, body: res } = await client.request({ path: '/', method: 'GET' })
+  const chunks = await readChunks(res)
+
+  assert.strictEqual(statusCode, 200)
+  assert.deepStrictEqual(Buffer.concat(chunks), data)
+})
+
+test('a content-length body is complete when the peer resets right after it', async (t) => {
+  const data = body(64)
+  const client = await startServer(t, {
+    head: `HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: ${data.length}\r\n\r\n`,
+    data,
+    reset: true
+  })
+
+  const { statusCode, body: res } = await client.request({ path: '/', method: 'GET' })
+  const chunks = await readChunks(res)
+
+  assert.strictEqual(statusCode, 200)
+  assert.deepStrictEqual(Buffer.concat(chunks), data)
+})
+
+test('TLS sockets default to a 256 KiB readable highWaterMark', async (t) => {
+  const server = tls.createServer({ key, cert }, (socket) => socket.end())
+  server.listen(0)
+  await once(server, 'listening')
+  t.after(() => server.close())
+
+  const connector = buildConnector({ ca, servername: 'agent1' })
+  const socket = await new Promise((resolve, reject) => {
+    connector({ hostname: 'localhost', host: 'localhost', protocol: 'https:', port: server.address().port }, (err, socket) => {
+      if (err) reject(err)
+      else resolve(socket)
+    })
+  })
+  t.after(() => socket.destroy())
+
+  assert.strictEqual(socket.readableHighWaterMark, 256 * 1024)
+})
+
+test('bytes buffered before a socket read error are still parsed', async (t) => {
+  const data = body(64)
+  const head = 'HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n'
+
+  const server = net.createServer((raw) => {
+    const socket = new tls.TLSSocket(raw, { isServer: true, key, cert })
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      socket.setMaxSendFragment(RECORD_SIZE)
+      socket.write(Buffer.concat([Buffer.from(head), data]))
+    })
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  t.after(() => server.close())
+
+  // Fail the socket with a read error as soon as the first record is buffered,
+  // while the client's deferred read is still pending: the error must not drop
+  // the bytes that arrived before it.
+  let buffered = -1
+  const connector = buildConnector({ ca, servername: 'agent1' })
+  const client = new Client(`https://localhost:${server.address().port}`, {
+    connect (opts, callback) {
+      connector(opts, (err, socket) => {
+        socket?.on('readable', function onReadable () {
+          if (this.readableLength > 0) {
+            this.off('readable', onReadable)
+            buffered = this.readableLength
+            this.destroy(Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET', syscall: 'read' }))
+          }
+        })
+        callback(err, socket)
+      })
+    }
+  })
+  t.after(() => client.destroy())
+
+  const { statusCode, body: res } = await client.request({ path: '/', method: 'GET' })
+  const chunks = await readChunks(res)
+
+  assert.ok(buffered > head.length, `${buffered} bytes buffered`)
+  assert.strictEqual(statusCode, 200)
+  assert.deepStrictEqual(Buffer.concat(chunks), data.subarray(0, buffered - head.length))
+})
