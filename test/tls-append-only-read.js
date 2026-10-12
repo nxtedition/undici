@@ -396,6 +396,68 @@ for (const method of ['GET', 'CONNECT']) {
   })
 }
 
+for (const method of ['GET', 'CONNECT']) {
+  for (const mode of ['flowing', 'iterator']) {
+    test(`a stopped ${method} upgrade resumes native reads through ${mode}`, async (t) => {
+      const earlySize = 512 * 1024
+      const lateSize = 64 * 1024
+      const head = method === 'CONNECT'
+        ? 'HTTP/1.1 200 OK\r\n\r\n'
+        : 'HTTP/1.1 101 Switching Protocols\r\nconnection: upgrade\r\nupgrade: test\r\n\r\n'
+      const { port, holdAcrossAnswer } = await startWorkerServer(t, `(socket, index) => {
+        const size = index === 0 ? ${earlySize} : ${lateSize}
+        const data = Buffer.allocUnsafe(size)
+        for (let i = 0; i < size; i += 4) data.writeUInt32LE(i + index, i)
+        if (index === 0) {
+          socket.write(Buffer.concat([Buffer.from(${JSON.stringify(head)}), data]))
+        } else {
+          socket.end(data)
+        }
+      }`)
+      const connector = buildConnector({ ca, servername: 'agent1' })
+      let stoppedBeforeUpgrade = false
+      const client = newClient(t, port, {
+        connect (opts, callback) {
+          const { buffer, callback: onRead } = opts.onread
+          connector({
+            ...opts,
+            onread: {
+              buffer,
+              callback (nread, buf) {
+                const result = onRead.call(this, nread, buf)
+                if (result === false && this[kParser]?.reader?.passThrough === false) {
+                  stoppedBeforeUpgrade = true
+                }
+                return result
+              }
+            }
+          }, callback)
+        }
+      })
+
+      const upgraded = upgrade(client, method === 'CONNECT'
+        ? { path: 'localhost:443', method }
+        : { path: '/', method, upgrade: 'test' })
+      holdAcrossAnswer()
+      const { socket } = await upgraded
+      assert.strictEqual(stoppedBeforeUpgrade, true, 'native reads stopped before handoff')
+
+      let chunks
+      if (mode === 'flowing') {
+        chunks = await readUpgraded(socket, () => socket.write('ping'))
+      } else {
+        chunks = []
+        for await (const chunk of socket) {
+          if (chunks.push(chunk) === 1) {
+            socket.write('ping')
+          }
+        }
+      }
+      assertBytes(chunks, Buffer.concat([pattern(earlySize), pattern(lateSize, 1)]))
+    })
+  }
+}
+
 test('an upgrade response that arrives with the FIN still hands over its bytes', async (t) => {
   const head = 'HTTP/1.1 101 Switching Protocols\r\nconnection: upgrade\r\nupgrade: test\r\n\r\n'
   const { port, holdAcrossAnswer } = await startWorkerServer(t, `(socket) => {
