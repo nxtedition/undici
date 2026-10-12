@@ -5,6 +5,7 @@ const assert = require('node:assert')
 const net = require('node:net')
 const tls = require('node:tls')
 const https = require('node:https')
+const { Duplex } = require('node:stream')
 const { Worker } = require('node:worker_threads')
 const { readFileSync } = require('node:fs')
 const { join } = require('node:path')
@@ -185,11 +186,13 @@ function readerOf (client) {
 
 test('the reader keeps received and unshifted bytes in order across slabs', () => {
   const reader = new SocketReader()
+  const socket = {}
+  reader.socket = socket
   const input = pattern(2 * SLAB_SIZE + 12345)
   // Pieces that do not divide a slab, so some continue in the next one.
   for (let i = 0; i < input.length; i += 10000) {
     const piece = input.subarray(i, i + 10000)
-    reader.onRead({}, piece.length, piece)
+    reader.onRead(socket, piece.length, piece)
   }
   assert.strictEqual(reader.pending, input.length)
   assert.strictEqual(reader.queue.length, 2, 'two filled slabs are queued')
@@ -645,6 +648,74 @@ test('a connector that gives onread to a socket it wraps in TLS is read through 
 
   const { chunks } = await dispatch(client, { path: '/', method: 'GET' })
 
+  assertBytes(chunks, data)
+  assert.strictEqual(readerOf(client), null)
+})
+
+test('a connector can read an intermediate CONNECT handshake before returning TLS', { timeout: 2000 }, async (t) => {
+  const data = pattern(64 * 1024)
+  const handshake = 'HTTP/1.1 200 Connection Established\r\n\r\n'
+  const server = net.createServer((raw) => {
+    t.after(() => raw.destroy())
+    raw.on('error', () => {})
+    raw.once('data', () => {
+      raw.write(handshake, () => {
+        const socket = new tls.TLSSocket(raw, { isServer: true, key, cert })
+        socket.on('error', () => {})
+        socket.once('data', () => {
+          socket.end(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\ncontent-length: ${data.length}\r\n\r\n`), data]))
+        })
+      })
+    })
+  })
+  server.listen(0)
+  await once(server, 'listening')
+  t.after(() => server.close())
+  const client = newClient(t, server.address().port, {
+    connect (opts, callback) {
+      const raw = net.connect({ ...opts, host: opts.hostname })
+      t.after(() => raw.destroy())
+      raw.once('connect', () => raw.write('CONNECT localhost:443 HTTP/1.1\r\n\r\n'))
+      raw.once('data', (head) => {
+        assert.strictEqual(head.toString(), handshake)
+        const socket = tls.connect({ socket: raw, ca, servername: 'agent1' })
+        socket.once('secureConnect', () => callback(null, socket)).once('error', (err) => callback(err, null))
+      }).once('error', (err) => callback(err, null))
+    }
+  })
+
+  const { chunks } = await dispatch(client, { path: '/', method: 'GET' })
+  assertBytes(chunks, data)
+  assert.strictEqual(readerOf(client), null)
+})
+
+test('a connector can wrap an onread TLS socket in a different stream', { timeout: 2000 }, async (t) => {
+  const data = pattern(64 * 1024)
+  const port = await startServer(t, (socket) => {
+    socket.write(Buffer.concat([Buffer.from(`HTTP/1.1 200 OK\r\ncontent-length: ${data.length}\r\n\r\n`), data]))
+  })
+  const client = newClient(t, port, {
+    connect (opts, callback) {
+      const inner = tls.connect({ ...opts, host: opts.hostname, ca, servername: 'agent1' })
+      t.after(() => inner.destroy())
+      const socket = new Duplex({
+        read () { inner.resume() },
+        write (chunk, encoding, done) { inner.write(chunk, encoding, done) },
+        destroy (err, done) {
+          inner.destroy()
+          done(err)
+        }
+      })
+      inner.on('data', (chunk) => {
+        if (!socket.push(chunk)) {
+          inner.pause()
+        }
+      }).on('end', () => socket.push(null)).on('error', (err) => socket.destroy(err))
+      inner.once('secureConnect', () => callback(null, socket))
+    }
+  })
+
+  const { chunks } = await dispatch(client, { path: '/', method: 'GET' })
   assertBytes(chunks, data)
   assert.strictEqual(readerOf(client), null)
 })
