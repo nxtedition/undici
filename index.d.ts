@@ -1,6 +1,6 @@
 import type { Blob } from 'node:buffer'
 import type { EventEmitter } from 'node:events'
-import type { IpcNetConnectOpts, Socket, TcpNetConnectOpts } from 'node:net'
+import type { IpcNetConnectOpts, OnReadOpts, Socket, TcpNetConnectOpts } from 'node:net'
 import type { ParsedUrlQueryInput } from 'node:querystring'
 import type { Readable as NodeReadable } from 'node:stream'
 import type { ConnectionOptions, TLSSocket } from 'node:tls'
@@ -379,6 +379,13 @@ export namespace buildConnector {
     localAddress?: string | null
     socketPath?: string | null
     httpSocket?: Socket
+    /**
+     * Passed by `Client` for `https:` origins. A connector that creates the
+     * socket with it (e.g. `tls.connect({ onread })`) lets the client receive
+     * the socket's bytes without a new buffer per read; one that ignores it
+     * leaves the client reading the socket's Readable side.
+     */
+    onread?: OnReadOpts
   }
 
   type Callback = (...args: [error: null, socket: Socket | TLSSocket] | [error: Error, socket: null]) => void
