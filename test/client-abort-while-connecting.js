@@ -297,3 +297,109 @@ test('cancelling a Pool attempt does not evict the client or block close', async
   assert.strictEqual(attempts[1].aborted, true)
   assert.strictEqual(connectionErrors, 0)
 })
+
+for (const Dispatcher of [Client, Pool]) {
+  test(`${Dispatcher.name} connect listener errors settle pending requests`, { timeout: 5000 }, async (t) => {
+    const { createServer } = require('node:http')
+    const server = createServer((req, res) => res.end('ok'))
+    t.after(() => server.close())
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+
+    const client = new Dispatcher(`http://127.0.0.1:${server.address().port}`, { connections: 1 })
+    t.after(() => client.destroy())
+    const reason = new Error('connect listener failed')
+    client.once('connect', () => { throw reason })
+    const timeout = Symbol('timeout')
+    const outcome = await Promise.race([requestOutcome(client), delay(500, timeout)])
+    assert.strictEqual(outcome, reason)
+    const response = await client.request({ path: '/', method: 'GET' })
+    assert.strictEqual(await response.body.text(), 'ok')
+  })
+}
+
+test('Pool requests abort promptly while queued behind a busy client', { timeout: 5000 }, async (t) => {
+  const { createServer } = require('node:http')
+  let finishFirst
+  let started
+  const firstStarted = new Promise((resolve) => { started = resolve })
+  const paths = []
+  const server = createServer((req, res) => {
+    paths.push(req.url)
+    if (req.url === '/first') {
+      finishFirst = () => res.end('first')
+      started()
+    } else {
+      res.end('next')
+    }
+  })
+  t.after(() => server.close())
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const pool = new Pool(`http://127.0.0.1:${server.address().port}`, { connections: 1 })
+  t.after(() => pool.destroy())
+  const first = pool.request({ path: '/first', method: 'GET' })
+  await firstStarted
+
+  const signal = new EventEmitter()
+  const queued = requestOutcome(pool, signal)
+  assert.strictEqual(pool.stats.queued, 1)
+  assert.strictEqual(signal.listenerCount('abort'), 1)
+  signal.emit('abort')
+  const timeout = Symbol('timeout')
+  const outcome = await Promise.race([queued, delay(500, timeout)])
+  assert.ok(outcome instanceof errors.RequestAbortedError)
+  assert.strictEqual(pool.stats.queued, 0)
+  assert.strictEqual(signal.listenerCount('abort'), 0)
+
+  const next = pool.request({ path: '/next', method: 'GET' })
+  finishFirst()
+  assert.strictEqual(await (await first).body.text(), 'first')
+  assert.strictEqual(await (await next).body.text(), 'next')
+  await pool.close()
+  assert.deepStrictEqual(paths, ['/first', '/next'])
+})
+
+test('Pool close ignores cancelled slots while a valid request finishes', { timeout: 5000 }, async (t) => {
+  const { createServer } = require('node:http')
+  let finishFirst
+  let started
+  const firstStarted = new Promise((resolve) => { started = resolve })
+  const server = createServer((req, res) => {
+    finishFirst = () => res.end('first')
+    started()
+  })
+  t.after(() => server.close())
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const pool = new Pool(`http://127.0.0.1:${server.address().port}`, { connections: 1 })
+  t.after(() => pool.destroy())
+  const first = pool.request({ path: '/first', method: 'GET' })
+  await firstStarted
+
+  const preAbortedReason = new Error('pre-aborted pool request')
+  assert.strictEqual(await requestOutcome(pool, AbortSignal.abort(preAbortedReason)), preAbortedReason)
+  assert.strictEqual(pool.stats.queued, 0)
+
+  const controller = new AbortController()
+  const reason = new Error('abort queued dispatch')
+  let callbacks = 0
+  const queued = new Promise((resolve) => {
+    pool.dispatch({ path: '/queued', method: 'GET', signal: controller.signal }, {
+      onConnect () { assert.fail('cancelled request must not connect') },
+      onHeaders () { assert.fail('cancelled request must not receive headers') },
+      onData () { assert.fail('cancelled request must not receive data') },
+      onComplete () { assert.fail('cancelled request must not complete') },
+      onError (err) { callbacks++; resolve(err) }
+    })
+  })
+  assert.strictEqual(pool.stats.queued, 1)
+  const closing = pool.close()
+  controller.abort(reason)
+  assert.strictEqual(await queued, reason)
+  assert.strictEqual(pool.stats.queued, 0)
+  finishFirst()
+  assert.strictEqual(await (await first).body.text(), 'first')
+  await closing
+  assert.strictEqual(callbacks, 1)
+})
