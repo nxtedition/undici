@@ -8,7 +8,9 @@ These responses never have a body, so the response ends at the blank line
 after the header section, whatever header fields it carries (RFC 9112 §6.3).
 This client deliberately differs from upstream undici
 ([nodejs/undici#5864](https://github.com/nodejs/undici/pull/5864)) in how it
-treats their `Content-Length`:
+treats their `Content-Length`. The table describes responses to non-HEAD
+requests without `Transfer-Encoding`, when connection reuse is otherwise
+allowed:
 
 | response | this client | upstream undici |
 |---|---|---|
