@@ -104,6 +104,47 @@ test('keeps a connection reusable after a 304 with Content-Length', async (t) =>
   assert.strictEqual(connections, 1)
 })
 
+test('a synchronous dump() of a 304 with a large Content-Length keeps the connection', async (t) => {
+  let connections = 0
+
+  const server = net.createServer((socket) => {
+    connections++
+    countRequests(socket, () => {
+      socket.write(
+        'HTTP/1.1 304 Not Modified\r\n' +
+        'Content-Length: 1000000\r\n' +
+        'Connection: keep-alive\r\n' +
+        '\r\n'
+      )
+    })
+  })
+
+  await listen(server)
+  t.after(() => server.close())
+
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
+  t.after(() => client.close())
+
+  for (let i = 0; i < 2; i++) {
+    // The callback runs from onHeaders, before the message completes, so the
+    // dump() starts while the response is still in flight.
+    const { statusCode, body } = await new Promise((resolve, reject) => {
+      client.request({ path: '/', method: 'GET' }, (err, data) => {
+        if (err) {
+          reject(err)
+        } else {
+          data.body.dump().then(() => resolve(data), reject)
+        }
+      })
+    })
+
+    assert.strictEqual(statusCode, 304)
+    assert.strictEqual(body.errored, null)
+  }
+
+  assert.strictEqual(connections, 1)
+})
+
 test('does not consume a pipelined response as 304 content', async (t) => {
   let requests = 0
 
