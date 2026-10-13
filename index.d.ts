@@ -1,6 +1,6 @@
 import type { Blob } from 'node:buffer'
 import type { EventEmitter } from 'node:events'
-import type { IpcNetConnectOpts, Socket, TcpNetConnectOpts } from 'node:net'
+import type { IpcNetConnectOpts, OnReadOpts, Socket, TcpNetConnectOpts } from 'node:net'
 import type { ParsedUrlQueryInput } from 'node:querystring'
 import type { Readable as NodeReadable } from 'node:stream'
 import type { ConnectionOptions, TLSSocket } from 'node:tls'
@@ -70,7 +70,7 @@ export type HeadersInit =
   | Iterable<readonly [string, HeaderValue | readonly HeaderValue[]]>
   | null
 
-export type RequestBodyChunk = string | ArrayBuffer | ArrayBufferView
+export type RequestBodyChunk = string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView
 
 export type RequestBody =
   | string
@@ -218,6 +218,7 @@ export namespace Dispatcher {
 export class Client extends Dispatcher {
   constructor (origin: URLInput, options?: Client.Options)
 
+  /** Maximum concurrent requests on the connection. Must be a non-negative integer; 0 disables keep-alive. */
   pipelining: number
   readonly closed: boolean
   readonly destroyed: boolean
@@ -225,6 +226,14 @@ export class Client extends Dispatcher {
 
 export namespace Client {
   interface Options {
+    /**
+     * The limit, in bytes, for a response's header section, counted like
+     * node:http: the reason phrase, field names and field values count; the
+     * rest of the status line, colons and CRLFs don't. A section whose count
+     * reaches the limit fails with `HeadersOverflowError`. Trailers are counted
+     * separately against the same limit.
+     * @default require('node:http').maxHeaderSize
+     */
     maxHeaderSize?: number
     /**
      * The time, in milliseconds, allowed to receive complete response headers.
@@ -245,8 +254,8 @@ export namespace Client {
     keepAliveMaxTimeout?: number
     keepAliveTimeoutThreshold?: number
     socketPath?: string
+    /** Maximum concurrent requests on the connection. Must be a non-negative integer; defaults to 1. Use 0 to disable keep-alive. */
     pipelining?: number
-    strictContentLength?: boolean
     maxCachedSessions?: number
     connect?: buildConnector.BuildOptions | buildConnector.Connector
     tls?: buildConnector.BuildOptions
@@ -380,6 +389,13 @@ export namespace buildConnector {
     localAddress?: string | null
     socketPath?: string | null
     httpSocket?: Socket
+    /**
+     * Passed by `Client` for `https:` origins. A connector that creates the
+     * socket with it (e.g. `tls.connect({ onread })`) lets the client receive
+     * the socket's bytes without a new buffer per read; one that ignores it
+     * leaves the client reading the socket's Readable side.
+     */
+    onread?: OnReadOpts
   }
 
   type Callback = (...args: [error: null, socket: Socket | TLSSocket] | [error: Error, socket: null]) => void

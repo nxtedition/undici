@@ -32,6 +32,16 @@ async function types () {
   client.closed satisfies boolean
   client.destroyed satisfies boolean
 
+  // @ts-expect-error Content-length checking cannot be disabled.
+  const invalidContentLengthClient = new Client('http://localhost', { strictContentLength: false })
+  invalidContentLengthClient satisfies Client
+  // @ts-expect-error Pools always check content-length.
+  const invalidContentLengthPool = new Pool('http://localhost', { strictContentLength: false })
+  invalidContentLengthPool satisfies Pool
+  // @ts-expect-error Agents always check content-length.
+  const invalidContentLengthAgent = new Agent({ strictContentLength: false })
+  invalidContentLengthAgent satisfies Agent
+
   const handler: Dispatcher.DispatchHandler = {
     onConnect (abort) {
       abort(false)
@@ -63,10 +73,16 @@ async function types () {
       yield 'hello'
       yield Buffer.from(' world')
       yield new ArrayBuffer(0)
+      yield new SharedArrayBuffer(0)
     })(),
     upgrade: null,
     typeOfService: 16
   }, handler)
+
+  client.request({ path: '/', method: 'POST', body: [new SharedArrayBuffer(2)] })
+
+  // @ts-expect-error SharedArrayBuffer is supported only as an iterable chunk.
+  client.request({ path: '/', method: 'POST', body: new SharedArrayBuffer(2) })
 
   client.dispatch({
     path: '/',

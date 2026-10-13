@@ -1,6 +1,6 @@
 {
   "name": "@nxtedition/undici",
-  "version": "13.0.1",
+  "version": "13.0.2",
   "publishConfig": {
     "access": "restricted"
   },
@@ -80,6 +80,9 @@
     "prepare": "husky",
     "preversion": "node scripts/check-release-branch.js",
     "prepublishOnly": "node scripts/check-release-branch.js --publish"
+  },
+  "dependencies": {
+    "@nxtedition/slice": "^2.1.9"
   },
   "devDependencies": {
     "@matteo.collina/tspl": "^0.1.1",
