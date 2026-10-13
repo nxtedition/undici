@@ -218,6 +218,7 @@ export namespace Dispatcher {
 export class Client extends Dispatcher {
   constructor (origin: URLInput, options?: Client.Options)
 
+  /** Maximum concurrent requests on the connection. Must be a non-negative integer; 0 disables keep-alive. */
   pipelining: number
   readonly closed: boolean
   readonly destroyed: boolean
@@ -245,6 +246,7 @@ export namespace Client {
     keepAliveMaxTimeout?: number
     keepAliveTimeoutThreshold?: number
     socketPath?: string
+    /** Maximum concurrent requests on the connection. Must be a non-negative integer; defaults to 1. Use 0 to disable keep-alive. */
     pipelining?: number
     maxCachedSessions?: number
     connect?: buildConnector.BuildOptions | buildConnector.Connector
