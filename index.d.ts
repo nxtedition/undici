@@ -226,6 +226,14 @@ export class Client extends Dispatcher {
 
 export namespace Client {
   interface Options {
+    /**
+     * The limit, in bytes, for a response's header section, counted like
+     * node:http: the reason phrase, field names and field values count; the
+     * rest of the status line, colons and CRLFs don't. A section whose count
+     * reaches the limit fails with `HeadersOverflowError`. Trailers are counted
+     * separately against the same limit.
+     * @default require('node:http').maxHeaderSize
+     */
     maxHeaderSize?: number
     /**
      * The time, in milliseconds, allowed to receive complete response headers.
