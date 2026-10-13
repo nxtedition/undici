@@ -860,6 +860,45 @@ test('pool request constructor error destroy body', async (t) => {
   await t.completed
 })
 
+test('pool close() closes each client once while later drains arrive', async (t) => {
+  const server = createServer((req, res) => {
+    res.end('asd')
+  })
+  t.after(() => server.close())
+  await new Promise((resolve) => server.listen(0, resolve))
+
+  let closeCalls = 0
+  const pool = new Pool(`http://localhost:${server.address().port}`, {
+    connections: 1,
+    pipelining: 2,
+    factory: (origin, opts) => {
+      const client = new Client(origin, opts)
+      const close = client.close
+      client.close = function (callback) {
+        // The promise form re-enters close() with a callback; count it once.
+        if (callback === undefined) {
+          closeCalls++
+        }
+        return close.call(this, callback)
+      }
+      return client
+    }
+  })
+  t.after(() => pool.destroy())
+
+  // Two requests fill the client and two wait in the pool queue. The client
+  // drains again after the queue empties, while it still has a request
+  // running.
+  const responses = []
+  for (let i = 0; i < 4; i++) {
+    responses.push(pool.request({ path: '/', method: 'GET' }).then(({ body }) => body.text()))
+  }
+
+  await withTimeout(pool.close(), 'close() never resolved')
+  assert.deepStrictEqual(await Promise.all(responses), ['asd', 'asd', 'asd', 'asd'])
+  assert.strictEqual(closeCalls, 1)
+})
+
 test('pool close waits for all requests', async (t) => {
   t = tspl(t, { plan: 5 })
 
