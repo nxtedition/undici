@@ -32,3 +32,23 @@ boundaries.
 Do not rely on transport callbacks running in the context that submitted a
 request. Applications that need request-scoped state must carry it explicitly
 outside the transport.
+
+## Closed stream bodies
+
+A stream passed as a request `body` may already be closed when the request is
+created. It has nothing left to read, so:
+
+- If it closed because it errored (`body.errored` is set), the request fails
+  with that error and nothing is sent.
+- Otherwise the request is sent with an empty body. Methods that normally
+  carry a payload, such as POST and PUT, send `content-length: 0`; other
+  methods may omit that header. This includes a stream destroyed without an
+  error before it ended
+  (`body.readableEnded === false`), such as one whose reader was cancelled
+  midway: the incomplete upload is not detected.
+
+A stream destroyed without an error while it is being sent fails the request
+with `RequestAbortedError`.
+
+If an incomplete upload must not succeed, destroy the stream with an error, or
+check `body.readableEnded` before sending it.

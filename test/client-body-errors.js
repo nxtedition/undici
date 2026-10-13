@@ -672,3 +672,59 @@ test('a cleanly finished, closed stream body is sent as an empty body', async (t
   assert.strictEqual(statusCode, 200)
   assert.deepStrictEqual(received, [{ length: 0, contentLength: '0' }])
 })
+
+// Documented in README.md ("Closed stream bodies"): unlike an errored stream,
+// one destroyed without an error before it ended is not treated as a failed
+// upload. Its unread data is dropped and the request goes out empty.
+test('a stream body destroyed without an error before it ended is sent as an empty body', async (t) => {
+  const received = []
+  const server = createServer(async (req, res) => {
+    let length = 0
+    for await (const chunk of req) {
+      length += chunk.length
+    }
+    received.push({ length, contentLength: req.headers['content-length'] })
+    res.end()
+  })
+  t.after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(() => client.destroy())
+
+  const body = new Readable({ read () {} })
+  body.push('partial')
+  body.destroy()
+  await new Promise((resolve) => body.once('close', resolve))
+  assert.strictEqual(body.errored, null)
+  assert.strictEqual(body.readableEnded, false)
+
+  const { statusCode, body: res } = await client.request({ path: '/', method: 'PUT', body })
+  await res.dump()
+  assert.strictEqual(statusCode, 200)
+  assert.deepStrictEqual(received, [{ length: 0, contentLength: '0' }])
+})
+
+test('a stream body destroyed without an error while it is sent fails the request', async (t) => {
+  const body = new Readable({ read () {} })
+  body.push('partial')
+
+  const server = createServer((req, res) => {
+    req.on('error', () => {})
+    // Destroy only once body bytes have arrived, so the upload is in flight.
+    req.once('data', () => body.destroy())
+    req.resume()
+  })
+  t.after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(() => client.destroy())
+
+  await assert.rejects(
+    withTimeout(client.request({ path: '/', method: 'PUT', body }), 5e3, 'request did not settle'),
+    errors.RequestAbortedError
+  )
+})
