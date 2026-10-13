@@ -104,3 +104,36 @@ test('destroy during the initialized socket handoff preserves the destruction re
   await destruction
   await new Promise((resolve) => setImmediate(resolve))
 })
+
+test('cancelling an initialized pending context preserves later queued requests', async (t) => {
+  const server = createServer((req, res) => res.end('ok'))
+  t.after(() => server.close())
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+
+  const controller = new AbortController()
+  const reason = new Error('cancel while parser handlers attach')
+  let cancel = true
+  const client = new Client(`http://127.0.0.1:${server.address().port}`, {
+    connect (opts, callback) {
+      const socket = net.connect({ host: opts.hostname, port: opts.port })
+      // Observe the real socket's handoff without delaying or replacing the
+      // parser. Cancellation is reentrant with its listener registration.
+      socket.on('newListener', (name) => {
+        if (cancel && name === 'readable') {
+          cancel = false
+          controller.abort(reason)
+        }
+      })
+      socket.once('connect', () => callback(null, socket))
+    }
+  })
+  t.after(() => client.destroy())
+
+  await assert.rejects(
+    client.request({ path: '/first', method: 'GET', signal: controller.signal }),
+    err => err === reason
+  )
+  const response = await client.request({ path: '/next', method: 'GET' })
+  assert.strictEqual(await response.body.text(), 'ok')
+})
