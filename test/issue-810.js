@@ -92,7 +92,7 @@ test('https://github.com/mcollina/undici/issues/810 pipelining', async (t) => {
 
   await once(server, 'listening')
 
-  const client = new Client(`http://localhost:${server.address().port}`, { pipelining: true })
+  const client = new Client(`http://localhost:${server.address().port}`, { pipelining: 2 })
   after(() => client.close())
 
   client.request({
@@ -122,7 +122,7 @@ test('https://github.com/mcollina/undici/issues/810 pipelining 2', async (t) => 
 
   await once(server, 'listening')
 
-  const client = new Client(`http://localhost:${server.address().port}`, { pipelining: true })
+  const client = new Client(`http://localhost:${server.address().port}`, { pipelining: 2 })
   after(() => client.close())
 
   client.request({
