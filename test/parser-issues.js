@@ -1,6 +1,7 @@
 'use strict'
 
 const { tspl } = require('@matteo.collina/tspl')
+const assert = require('node:assert/strict')
 const { once } = require('node:events')
 const { test } = require('node:test')
 const net = require('node:net')
@@ -151,6 +152,40 @@ test('parser fail', async (testContext) => {
   await t.completed
 })
 
+test('rejects DEL inside a quoted chunk extension value', async (testContext) => {
+  // llhttp 9.3.1 no longer accepts 0x7F in a quoted chunk-ext value; it is
+  // not qdtext (RFC 9110 5.6.4).
+  const t = tspl(testContext, { plan: 2 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
+
+  const { server } = resources.use(createTrackedServer(socket => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      socket.end(
+        'HTTP/1.1 200 OK\r\n' +
+        'Transfer-Encoding: chunked\r\n' +
+        '\r\n' +
+        '2;ext="a\x7fb"\r\n' +
+        'ok\r\n' +
+        '0\r\n' +
+        '\r\n'
+      )
+    })
+  }))
+
+  await listen(server)
+
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  const { body } = await client.request({ method: 'GET', path: '/' })
+  // The status line and headers are valid; the chunk that follows is not.
+  const err = await body.text().then(() => null, (err) => err)
+  t.ok(err instanceof errors.HTTPParserError)
+  t.match(err.message, /chunk extensions quoted value/)
+
+  await t.completed
+})
+
 test('split header field', async (testContext) => {
   const t = tspl(testContext, { plan: 2 })
   const resources = new globalThis.AsyncDisposableStack()
@@ -178,6 +213,42 @@ test('split header field', async (testContext) => {
     t.equal(data.headers.asd, 'asd,asd')
     data.body.resume()
   })
+
+  await t.completed
+})
+
+test('header values keep obs-text and a split tracked name is still recognised', async (testContext) => {
+  const t = tspl(testContext, { plan: 4 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
+
+  const { server } = resources.use(createTrackedServer(socket => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      // Split the Content-Length name across two reads, and send a value with
+      // obs-text bytes (0x80-0xFF), which are decoded as latin1.
+      socket.write('HTTP/1.1 200 OK\r\nConte')
+      setTimeout(() => {
+        socket.end(Buffer.concat([
+          Buffer.from('nt-Length: 10\r\nConnection: close\r\nX-Latin: caf', 'latin1'),
+          Buffer.from([0xe9, 0x20, 0xff]),
+          Buffer.from('\r\n\r\nshort', 'latin1')
+        ]))
+      }, 50)
+    })
+  }))
+
+  await listen(server)
+
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  const { headers, body } = await client.request({ method: 'GET', path: '/' })
+  t.strictEqual(headers['content-length'], '10')
+  t.strictEqual(headers['x-latin'], 'caf\u00e9 \u00ff')
+
+  // The declared length is still tracked, so the short body is an error.
+  const err = await body.text().then(() => null, (err) => err)
+  t.ok(err)
+  t.strictEqual(err.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
 
   await t.completed
 })
@@ -279,4 +350,65 @@ test('refreshes wasm input view after reallocating parser buffer', async (testCo
   t.strictEqual(largeResponse.body, largeBody.toString())
 
   await t.completed
+})
+
+test('HTTPParserError carries the llhttp error code', async (testContext) => {
+  const t = tspl(testContext, { plan: 4 })
+  const resources = new globalThis.AsyncDisposableStack()
+  testContext.after(() => resources.disposeAsync())
+
+  const responses = [
+    ['HTTP/1.1 2x0 OK\r\n\r\n', 'HPE_INVALID_STATUS'],
+    ['HTT/1.1 200 OK\r\n\r\n', 'HPE_INVALID_CONSTANT']
+  ]
+
+  for (const [response, code] of responses) {
+    const { server } = resources.use(createTrackedServer(socket => {
+      socket.on('error', () => {})
+      socket.once('data', () => socket.end(response))
+    }))
+    await listen(server)
+
+    const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+    const err = await client.request({ method: 'GET', path: '/' }).then(() => null, (err) => err)
+    t.ok(err instanceof errors.HTTPParserError)
+    t.strictEqual(err.code, code)
+  }
+
+  await t.completed
+})
+
+for (const [name, response, code] of [
+  ['bare LF in status line', 'HTTP/1.1 200 OK\nContent-Length: 0\r\n\r\n', 'HPE_CR_EXPECTED'],
+  ['CR CR after status line', 'HTTP/1.1 200 OK\r\rContent-Length: 0\r\n\r\n', 'HPE_STRICT'],
+  ['empty Transfer-Encoding', 'HTTP/1.1 200 OK\r\nTransfer-Encoding:\r\n\r\n', 'HPE_INVALID_TRANSFER_ENCODING'],
+  ['whitespace-only Transfer-Encoding', 'HTTP/1.1 200 OK\r\nTransfer-Encoding: \t\r\n\r\n', 'HPE_INVALID_TRANSFER_ENCODING']
+]) {
+  test(`llhttp rejects ${name}`, async (t) => {
+    const resources = new globalThis.AsyncDisposableStack()
+    t.after(() => resources.disposeAsync())
+    const { server } = resources.use(createTrackedServer(socket => {
+      socket.on('error', () => {})
+      socket.once('data', () => socket.end(response))
+    }))
+    await listen(server)
+    const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+    await assert.rejects(client.request({ method: 'GET', path: '/' }), {
+      name: 'HTTPParserError', code
+    })
+  })
+}
+
+test('llhttp accepts a tab after Connection: close', async (t) => {
+  const resources = new globalThis.AsyncDisposableStack()
+  t.after(() => resources.disposeAsync())
+  const { server } = resources.use(createTrackedServer(socket => {
+    socket.on('error', () => {})
+    socket.once('data', () => socket.end('HTTP/1.1 200 OK\r\nConnection: close\t\r\n\r\nhello'))
+  }))
+  await listen(server)
+  const client = resources.use(new Client(`http://localhost:${server.address().port}`))
+  const { statusCode, body } = await client.request({ method: 'GET', path: '/' })
+  assert.strictEqual(statusCode, 200)
+  assert.strictEqual(await body.text(), 'hello')
 })

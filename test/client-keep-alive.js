@@ -3,9 +3,11 @@
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { once } = require('node:events')
+const assert = require('node:assert/strict')
+const { setImmediate: waitImmediate } = require('node:timers/promises')
 const { Client } = require('..')
 const timers = require('../lib/util/timers')
-const { kConnect } = require('../lib/core/symbols')
+const { kConnect, kKeepAliveTimeoutValue } = require('../lib/core/symbols')
 const { createServer } = require('node:net')
 const http = require('node:http')
 const FakeTimers = require('@sinonjs/fake-timers')
@@ -438,4 +440,158 @@ test('Disable keep alive', async (t) => {
     }).resume()
   })
   await t.completed
+})
+
+test('a reused keep-alive timer only closes the socket while it is idle', async (t) => {
+  t = tspl(t, { plan: 6 })
+
+  // The parser keeps its keep-alive timer armed when a request is dispatched
+  // onto an idle socket, then refreshes it on the next idle period. A timer left
+  // over from the first idle period must not tear down a slow in-flight
+  // request, and the refreshed one must still close the socket afterwards.
+  const server = http.createServer({ keepAliveTimeout: 60e3 }, (req, res) => {
+    const delay = req.url === '/slow' ? 400 : 0
+    setTimeout(() => res.end('ok'), delay)
+  })
+  after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  // The server advertises Keep-Alive: timeout=60; cap what the client honors.
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    keepAliveTimeout: 200,
+    keepAliveMaxTimeout: 200
+  })
+  after(() => client.destroy())
+
+  let connects = 0
+  client.on('connect', () => connects++)
+
+  const first = await client.request({ path: '/', method: 'GET' })
+  t.strictEqual(await first.body.text(), 'ok')
+
+  // Idle briefly, then outlive the keep-alive timeout while waiting on headers.
+  await new Promise(resolve => setTimeout(resolve, 50))
+  const second = await client.request({ path: '/slow', method: 'GET' })
+  t.strictEqual(await second.body.text(), 'ok')
+  t.strictEqual(connects, 1)
+
+  const start = performance.now()
+  const [, , err] = await once(client, 'disconnect')
+  t.strictEqual(err.code, 'UND_ERR_INFO')
+  t.strictEqual(err.message, 'socket idle timeout')
+  t.ok(performance.now() - start < 2e3)
+  await t.completed
+})
+
+test('tracked response headers are matched case-insensitively', async (t) => {
+  t = tspl(t, { plan: 4 })
+
+  // Keep-Alive, Connection and Content-Length are recognised by name however
+  // the server spells them: a truncated body must be caught through an
+  // upper-case Content-Length, and an upper-case Keep-Alive must set the idle
+  // timeout.
+  const server = createServer((socket) => {
+    socket.once('data', () => {
+      socket.write('HTTP/1.1 200 OK\r\nCONTENT-LENGTH: 2\r\nKEEP-ALIVE: timeout=3\r\nCONNECTION: keep-alive\r\n\r\nok')
+      socket.once('data', () => {
+        socket.end('HTTP/1.1 200 OK\r\nCONTENT-LENGTH: 10\r\nCONNECTION: close\r\n\r\nshort')
+      })
+    })
+  })
+  after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    keepAliveTimeoutThreshold: 2e3
+  })
+  after(() => client.destroy())
+
+  const first = await client.request({ path: '/', method: 'GET' })
+  t.strictEqual(await first.body.text(), 'ok')
+  // timeout=3 minus the 2 s threshold.
+  t.strictEqual(client[kKeepAliveTimeoutValue], 1e3)
+
+  const second = await client.request({ path: '/', method: 'GET' })
+  const err = await second.body.text().then(() => null, (err) => err)
+  t.ok(err)
+  t.strictEqual(err.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
+  await t.completed
+})
+
+test('a changed Keep-Alive timeout on a reused connection is honoured', async (t) => {
+  t = tspl(t, { plan: 3 })
+
+  // The parser remembers the last Keep-Alive value it parsed; a different
+  // value on a later response of the same connection must still take effect.
+  let responses = 0
+  const server = createServer((socket) => {
+    socket.on('data', () => {
+      const timeout = ++responses === 1 ? 60 : 5
+      socket.write(`HTTP/1.1 200 OK\r\nContent-Length: 0\r\nKeep-Alive: timeout=${timeout}\r\nConnection: keep-alive\r\n\r\n`)
+    })
+  })
+  after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    keepAliveTimeoutThreshold: 2e3
+  })
+  after(() => client.destroy())
+
+  await (await client.request({ path: '/', method: 'GET' })).body.dump()
+  t.strictEqual(client[kKeepAliveTimeoutValue], 58e3)
+
+  await (await client.request({ path: '/', method: 'GET' })).body.dump()
+  t.strictEqual(client[kKeepAliveTimeoutValue], 3e3)
+  t.strictEqual(responses, 2)
+  await t.completed
+})
+
+test('HEAD connection tokens preserve reuse and respect close', { timeout: 10000 }, async (t) => {
+  for (const [name, fields, expectedConnections] of [
+    ['repeated fragmented keep-alive', ['x-token', 'keep-alive'], 1],
+    ['keep-alive before another field', ['keep-alive', 'x-token'], 1],
+    ['comma-separated tokens and whitespace', ['x-token, \tKEEP-ALIVE\t '], 1],
+    ['close before keep-alive', ['close', 'keep-alive'], 2],
+    ['close after keep-alive', ['keep-alive', 'close'], 2],
+    ['close in a comma-separated list', ['keep-alive, CLOSE'], 2],
+    ['a longer token does not match', ['x-keep-alive'], 2]
+  ]) {
+    await t.test(name, async (t) => {
+      let connections = 0
+      const server = createServer(socket => {
+        connections++
+        let pending = ''
+        let responses = Promise.resolve()
+        socket.on('data', chunk => {
+          pending += chunk.toString()
+          while (pending.includes('\r\n\r\n')) {
+            pending = pending.slice(pending.indexOf('\r\n\r\n') + 4)
+            responses = responses.then(async () => {
+              const response = 'HTTP/1.0 200 OK\r\n' +
+                fields.map(value => `Connection: ${value}\r\n`).join('') + '\r\n'
+              // Split the final field value so token parsing also covers fragments.
+              const split = response.length - 7
+              socket.write(response.slice(0, split))
+              await waitImmediate()
+              socket.write(response.slice(split))
+            })
+          }
+        })
+      })
+      t.after(() => server.close())
+      server.listen(0)
+      await once(server, 'listening')
+      const client = new Client(`http://localhost:${server.address().port}`)
+      t.after(() => client.destroy())
+      for (let i = 0; i < 2; i++) {
+        const response = await client.request({ path: '/', method: 'HEAD', reset: false })
+        await response.body.dump()
+      }
+      assert.equal(connections, expectedConnections)
+    })
+  }
 })

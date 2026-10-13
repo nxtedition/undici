@@ -9,10 +9,11 @@ import undici, {
   buildConnector,
   errors,
   getGlobalDispatcher,
+  headerNameToString,
   request,
-  setGlobalDispatcher,
-  util
+  setGlobalDispatcher
 } from '../..'
+import type { HeaderMap } from '../..'
 import undiciRequire = require('../..')
 
 function acceptsUnknown (_value: unknown) {}
@@ -32,11 +33,22 @@ async function types () {
   client.closed satisfies boolean
   client.destroyed satisfies boolean
 
+  // @ts-expect-error Content-length checking cannot be disabled.
+  const invalidContentLengthClient = new Client('http://localhost', { strictContentLength: false })
+  invalidContentLengthClient satisfies Client
+  // @ts-expect-error Pools always check content-length.
+  const invalidContentLengthPool = new Pool('http://localhost', { strictContentLength: false })
+  invalidContentLengthPool satisfies Pool
+  // @ts-expect-error Agents always check content-length.
+  const invalidContentLengthAgent = new Agent({ strictContentLength: false })
+  invalidContentLengthAgent satisfies Agent
+
   const handler: Dispatcher.DispatchHandler = {
     onConnect (abort) {
       abort(false)
     },
     onHeaders (statusCode, headers, resume) {
+      headers satisfies HeaderMap
       statusCode.toFixed()
       headers['content-type']?.toString()
       resume()
@@ -46,6 +58,7 @@ async function types () {
       return chunk.byteLength > 0
     },
     onComplete (trailers) {
+      trailers satisfies HeaderMap
       trailers.date?.toString()
     },
     onError (reason) {
@@ -61,10 +74,16 @@ async function types () {
       yield 'hello'
       yield Buffer.from(' world')
       yield new ArrayBuffer(0)
+      yield new SharedArrayBuffer(0)
     })(),
     upgrade: null,
     typeOfService: 16
   }, handler)
+
+  client.request({ path: '/', method: 'POST', body: [new SharedArrayBuffer(2)] })
+
+  // @ts-expect-error SharedArrayBuffer is supported only as an iterable chunk.
+  client.request({ path: '/', method: 'POST', body: new SharedArrayBuffer(2) })
 
   client.dispatch({
     path: '/',
@@ -76,6 +95,7 @@ async function types () {
       abort({ application: 'reason' })
     },
     onUpgrade (statusCode, headers, socket) {
+      headers satisfies HeaderMap
       statusCode.toFixed()
       headers.connection?.toString()
       socket.destroy()
@@ -103,6 +123,8 @@ async function types () {
 
   response.opaque.requestId satisfies 42
   response.context satisfies unknown
+  response.headers satisfies HeaderMap
+  response.trailers satisfies HeaderMap
   response.headers.date?.toString()
   response.trailers.date?.toString()
   await response.body.dump({ limit: 1024, signal: AbortSignal.timeout(10) }) satisfies void
@@ -219,10 +241,6 @@ async function types () {
   })
   connectingSocket.destroy()
 
-  util.headerNameToString(Buffer.from('Content-Type')) satisfies string
-  const parsed = util.parseHeaders([Buffer.from('x-test'), Buffer.from('yes')], { existing: 'value' })
-  parsed.existing satisfies string
-
   const body = new Readable({
     resume () {},
     abort (reason) {
@@ -270,3 +288,12 @@ types satisfies () => Promise<void>
 
 // Keep this fixture a module even if imports are mechanically changed.
 export {}
+
+const headerNameBuffer = Buffer.from('Content-Type')
+headerNameToString(headerNameBuffer, 0, headerNameBuffer.length) satisfies string
+undici.headerNameToString(headerNameBuffer, 0, headerNameBuffer.length) satisfies string
+undiciRequire.headerNameToString(headerNameBuffer, 0, headerNameBuffer.length) satisfies string
+// @ts-expect-error the helper decodes a Buffer byte range, not a string
+headerNameToString('Content-Type', 0, 12)
+// @ts-expect-error offset and length are required
+headerNameToString(headerNameBuffer)

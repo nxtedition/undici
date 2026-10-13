@@ -13,3 +13,9 @@ test/request-timeout.10mb.bin
 # AI agent private workspaces (.codex-private, .claude-private, ...)
 .claude
 .*-private/
+
+# Local AI workspaces and private scratch files
+.codex
+.cursor
+.aider*
+.*-private

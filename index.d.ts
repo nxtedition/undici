@@ -1,6 +1,6 @@
 import type { Blob } from 'node:buffer'
 import type { EventEmitter } from 'node:events'
-import type { IpcNetConnectOpts, Socket, TcpNetConnectOpts } from 'node:net'
+import type { IpcNetConnectOpts, OnReadOpts, Socket, TcpNetConnectOpts } from 'node:net'
 import type { ParsedUrlQueryInput } from 'node:querystring'
 import type { Readable as NodeReadable } from 'node:stream'
 import type { ConnectionOptions, TLSSocket } from 'node:tls'
@@ -8,6 +8,58 @@ import type { UrlObject } from 'node:url'
 
 export type URLInput = string | URL | UrlObject
 
+/**
+ * A parsed header or trailer field section, keyed by lowercased field name.
+ * This is what the parser produces and hands to handlers.
+ *
+ * Three guarantees, all of which let consumers copy or read one of these maps
+ * without re-deriving the checks:
+ *
+ * 1. No value is nullish. The parser only ever stores a latin1 string or an
+ *    array of them — a repeated field line becomes the array.
+ * 2. No own key is `__proto__`. It is a valid RFC 9110 field-name token, so a peer
+ *    may send one, but the parser drops it. Assigning that key onto a plain
+ *    object invokes Object.prototype's setter, and for a repeated field line —
+ *    whose value is an array — that replaces the target's prototype outright.
+ * 3. Every own key is lowercased. Field names are case-insensitive (RFC 9110
+ *    §5.1) and the parser lowercases each one, so `h['content-type']` finds the
+ *    field however the peer spelled it, and two spellings of one name collapse
+ *    into a single entry whose repeated values form an array — a consumer never
+ *    has to lowercase a key, nor look for a second entry under another casing.
+ *    Only the key is normalized; values are stored as received.
+ *
+ * Other field names are retained, including `constructor`; `toString` is
+ * normalized to `tostring` like any other mixed-case field name.
+ *
+ * The `__proto__?: never` member makes guarantee 2 checkable rather than merely
+ * documented: `h.__proto__ = v`, `h['__proto__'] = v` and a literal
+ * `{ __proto__: v }` are all compile errors. It must stay OPTIONAL — a required
+ * `__proto__: never` would reject every ordinary header object for "missing"
+ * the property.
+ *
+ * It is a guard rail, not a proof. A dynamic key (`h[name] = v`, which is what
+ * copy loops do) still gets through, and because a plain
+ * Record<string, string | string[]> satisfies the optional member vacuously,
+ * round-tripping a value through that wider type launders the guarantee. The
+ * runtime drop in the parser is what actually holds the line.
+ *
+ * Guarantee 3 is a producer contract. A `Lowercase<string>` index signature can
+ * reject mixed-case literal keys, but also rejects ordinary string indexing,
+ * including keys from Object.keys() and String#toLowerCase(). This type keeps
+ * string indexing for consumers that read or copy maps dynamically. The parser
+ * normalizes incoming names; maps synthesized by custom dispatchers or
+ * interceptors must already have lowercased keys.
+ */
+export type HeaderMap = Record<string, string | string[]> & { __proto__?: never }
+
+/**
+ * The historical, wider spelling of a field section, kept for compatibility.
+ *
+ * Its `| undefined` is an artifact of mirroring Node's http.IncomingHttpHeaders,
+ * where undefined expresses "indexing an arbitrary name may miss" rather than a
+ * storable value. No parsed field section actually contains one; prefer
+ * HeaderMap, which says so.
+ */
 export type IncomingHttpHeaders = Record<string, string | string[] | undefined>
 
 export type HeaderValue = string | number | bigint | boolean | null | undefined
@@ -18,7 +70,7 @@ export type HeadersInit =
   | Iterable<readonly [string, HeaderValue | readonly HeaderValue[]]>
   | null
 
-export type RequestBodyChunk = string | ArrayBuffer | ArrayBufferView
+export type RequestBodyChunk = string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView
 
 export type RequestBody =
   | string
@@ -131,8 +183,8 @@ export namespace Dispatcher {
 
   interface ResponseData<TOpaque = null> {
     statusCode: number
-    headers: IncomingHttpHeaders
-    trailers: IncomingHttpHeaders
+    headers: HeaderMap
+    trailers: HeaderMap
     /** The request opaque value, with null and undefined normalized to null. */
     opaque: TOpaque extends null | undefined ? null : TOpaque
     body: Readable
@@ -146,17 +198,17 @@ export namespace Dispatcher {
   }
 
   interface ResponseDispatchHandler extends DispatchHandlerBase {
-    onHeaders(statusCode: number, headers: IncomingHttpHeaders, resume: () => void): boolean | void
+    onHeaders(statusCode: number, headers: HeaderMap, resume: () => void): boolean | void
     onData(chunk: Buffer): boolean | void
-    onComplete(trailers: IncomingHttpHeaders): void
-    onUpgrade?(statusCode: number, headers: IncomingHttpHeaders, socket: Socket): void
+    onComplete(trailers: HeaderMap): void
+    onUpgrade?(statusCode: number, headers: HeaderMap, socket: Socket): void
   }
 
   interface UpgradeDispatchHandler extends DispatchHandlerBase {
-    onUpgrade(statusCode: number, headers: IncomingHttpHeaders, socket: Socket): void
-    onHeaders?(statusCode: number, headers: IncomingHttpHeaders, resume: () => void): boolean | void
+    onUpgrade(statusCode: number, headers: HeaderMap, socket: Socket): void
+    onHeaders?(statusCode: number, headers: HeaderMap, resume: () => void): boolean | void
     onData?(chunk: Buffer): boolean | void
-    onComplete?(trailers: IncomingHttpHeaders): void
+    onComplete?(trailers: HeaderMap): void
   }
 
   type DispatchHandler = ResponseDispatchHandler | UpgradeDispatchHandler
@@ -166,6 +218,7 @@ export namespace Dispatcher {
 export class Client extends Dispatcher {
   constructor (origin: URLInput, options?: Client.Options)
 
+  /** Maximum concurrent requests on the connection. Must be a non-negative integer; 0 disables keep-alive. */
   pipelining: number
   readonly closed: boolean
   readonly destroyed: boolean
@@ -173,6 +226,14 @@ export class Client extends Dispatcher {
 
 export namespace Client {
   interface Options {
+    /**
+     * The limit, in bytes, for a response's header section, counted like
+     * node:http: the reason phrase, field names and field values count; the
+     * rest of the status line, colons and CRLFs don't. A section whose count
+     * reaches the limit fails with `HeadersOverflowError`. Trailers are counted
+     * separately against the same limit.
+     * @default require('node:http').maxHeaderSize
+     */
     maxHeaderSize?: number
     /**
      * The time, in milliseconds, allowed to receive complete response headers.
@@ -193,8 +254,8 @@ export namespace Client {
     keepAliveMaxTimeout?: number
     keepAliveTimeoutThreshold?: number
     socketPath?: string
+    /** Maximum concurrent requests on the connection. Must be a non-negative integer; defaults to 1. Use 0 to disable keep-alive. */
     pipelining?: number
-    strictContentLength?: boolean
     maxCachedSessions?: number
     connect?: buildConnector.BuildOptions | buildConnector.Connector
     tls?: buildConnector.BuildOptions
@@ -330,6 +391,13 @@ export namespace buildConnector {
     httpSocket?: Socket
     /** Aborted when no queued request still depends on this connection attempt. */
     signal?: AbortSignal
+    /**
+     * Passed by `Client` for `https:` origins. A connector that creates the
+     * socket with it (e.g. `tls.connect({ onread })`) lets the client receive
+     * the socket's bytes without a new buffer per read; one that ignores it
+     * leaves the client reading the socket's Readable side.
+     */
+    onread?: OnReadOpts
   }
 
   type Callback = (...args: [error: null, socket: Socket | TLSSocket] | [error: Error, socket: null]) => void
@@ -479,16 +547,6 @@ export namespace errors {
   }
 }
 
-export namespace util {
-  function headerNameToString (value: string | Buffer): string
-
-  function parseHeaders (headers: readonly (Buffer | string | readonly (Buffer | string)[])[]): IncomingHttpHeaders
-  function parseHeaders<T extends IncomingHttpHeaders> (
-    headers: readonly (Buffer | string | readonly (Buffer | string)[])[],
-    object: T
-  ): T
-}
-
 export interface TopLevelRequestOptions<TOpaque = null>
   extends Omit<Dispatcher.RequestOptions<TOpaque>, 'origin' | 'path' | 'method'> {
   dispatcher?: Dispatcher
@@ -513,6 +571,15 @@ export function request<TOpaque = null> (
   callback: RequestCallback<TOpaque>
 ): void
 
+/**
+ * Decode an HTTP header-name byte range as Latin-1 and return its ASCII-lowercased
+ * spelling. ASCII uppercase bytes in the selected range are lowercased in place;
+ * bytes outside the range are unchanged. Known names reuse preallocated strings.
+ * Throws InvalidArgumentError unless offset and length are nonnegative safe
+ * integers describing a range within the Buffer.
+ */
+export function headerNameToString (buffer: Buffer, byteOffset: number, byteLength: number): string
+
 export function setGlobalDispatcher (dispatcher: Dispatcher): void
 export function getGlobalDispatcher (): Dispatcher
 
@@ -524,7 +591,7 @@ declare const Undici: {
   Readable: typeof Readable
   buildConnector: typeof buildConnector
   errors: typeof errors
-  util: typeof util
+  headerNameToString: typeof headerNameToString
   setGlobalDispatcher: typeof setGlobalDispatcher
   getGlobalDispatcher: typeof getGlobalDispatcher
   request: typeof request

@@ -616,6 +616,37 @@ test('invalid options throws', (t, done) => {
   done()
 })
 
+test('pipelining must be a non-negative integer', (t) => {
+  const invalid = ['x', '1', -1, 1.5, NaN, Infinity, true, {}]
+  const message = 'pipelining must be a positive integer or zero'
+
+  for (const pipelining of invalid) {
+    assert.throws(
+      () => new Client('http://localhost:200', { pipelining }),
+      (err) => err instanceof errors.InvalidArgumentError && err.message === message,
+      `constructor accepted ${String(pipelining)}`
+    )
+  }
+
+  const client = new Client('http://localhost:200', { pipelining: 2 })
+  t.after(() => client.destroy())
+
+  for (const pipelining of invalid) {
+    assert.throws(
+      () => { client.pipelining = pipelining },
+      (err) => err instanceof errors.InvalidArgumentError && err.message === message,
+      `setter accepted ${String(pipelining)}`
+    )
+    assert.strictEqual(client.pipelining, 2)
+  }
+
+  for (const pipelining of [0, 1, 10, null, undefined]) {
+    new Client('http://localhost:200', { pipelining }).destroy()
+    client.pipelining = pipelining
+    assert.strictEqual(client.pipelining, pipelining)
+  }
+})
+
 test('POST which fails should error response', async (t) => {
   const p = tspl(t, { plan: 6 })
 

@@ -1,8 +1,6 @@
 'use strict'
 
-const WASM_BUILDER_CONTAINER = 'ghcr.io/nodejs/wasm-builder@sha256:975f391d907e42a75b8c72eb77c782181e941608687d4d8694c3e9df415a0970' // v0.0.9
-
-const { execSync } = require('node:child_process')
+const { execSync, execFileSync } = require('node:child_process')
 const { writeFileSync, readFileSync } = require('node:fs')
 const { join, resolve } = require('node:path')
 
@@ -15,7 +13,7 @@ const WASM_CC = process.env.WASM_CC || 'clang'
 let WASM_CFLAGS = process.env.WASM_CFLAGS || '--sysroot=/usr/share/wasi-sysroot -target wasm32-unknown-wasi'
 let WASM_LDFLAGS = process.env.WASM_LDFLAGS || ''
 const WASM_LDLIBS = process.env.WASM_LDLIBS || ''
-const WASM_OPT = process.env.WASM_OPT || './wasm-opt'
+const WASM_OPT = process.env.WASM_OPT || 'wasm-opt'
 
 // For compatibility with Node.js' `configure --shared-builtin-undici/undici-path ...`
 const EXTERNAL_PATH = process.env.EXTERNAL_PATH
@@ -27,6 +25,7 @@ WASM_LDFLAGS += ' -Wl,--allow-undefined -Wl,--export-dynamic -Wl,--export-table'
 WASM_LDFLAGS += ' -Wl,--export=malloc -Wl,--export=free -Wl,--no-entry'
 
 const WASM_OPT_FLAGS = '-O4 --converge --strip-debug --strip-dwarf --strip-producers'
+const wasmOptFlags = WASM_OPT_FLAGS.split(/\s+/).filter(Boolean)
 
 const writeWasmChunk = (path, dest) => {
   const base64 = readFileSync(join(WASM_OUT, path)).toString('base64')
@@ -48,38 +47,34 @@ Object.defineProperty(module, 'exports', {
 `)
 }
 
-let platform = process.env.WASM_PLATFORM
-if (!platform && process.argv[2]) {
-  platform = execSync('docker info -f "{{.OSType}}/{{.Architecture}}"').toString().trim()
-}
-
 if (process.argv[2] === '--docker') {
-  let cmd = `docker run --rm --platform=${platform.toString().trim()} `
+  // The upstream arm64 image lacks Binaryen 116. Always use the pinned amd64
+  // toolchain so Docker builds optimize identically on every host.
+  const image = execFileSync('docker', [
+    'build', '--platform=linux/amd64', '--quiet', '-f', join(__dirname, 'Dockerfile'), __dirname
+  ], { encoding: 'utf8' }).trim()
+  const args = ['run', '--rm', '--platform=linux/amd64']
   if (process.platform === 'linux') {
-    cmd += ` --user ${process.getuid()}:${process.getegid()}`
+    args.push('--user', `${process.getuid()}:${process.getegid()}`)
   }
-
-  cmd += ` --mount type=bind,source=${ROOT}/lib/llhttp,target=/home/node/build/lib/llhttp \
-           --mount type=bind,source=${ROOT}/build,target=/home/node/build/build \
-           --mount type=bind,source=${ROOT}/deps,target=/home/node/build/deps \
-           -t ${WASM_BUILDER_CONTAINER} node build/wasm.js`
-  console.log(`> ${cmd}\n\n`)
-  execSync(cmd, { stdio: 'inherit' })
+  for (const dir of ['lib/llhttp', 'build', 'deps']) {
+    args.push('--mount', `type=bind,source=${join(ROOT, dir)},target=/home/node/build/${dir}`)
+  }
+  args.push(image, 'node', 'build/wasm.js')
+  execFileSync('docker', args, { stdio: 'inherit' })
   process.exit(0)
 }
 
 const hasApk = (function () {
-  try { execSync('command -v apk'); return true } catch (error) { return false }
+  try { execSync('command -v apk'); return true } catch { return false }
 })()
-const hasOptimizer = (function () {
-  try { execSync(`${WASM_OPT} --version`); return true } catch (error) { return false }
-})()
+// Do not silently generate different, unoptimized artifacts when it is absent.
+execFileSync(WASM_OPT, ['--version'], { stdio: 'inherit' })
 if (hasApk) {
   // Gather information about the tools used for the build
   const buildInfo = execSync('apk info -v').toString()
   if (!buildInfo.includes('wasi-sdk')) {
-    console.log('Failed to generate build environment information')
-    process.exit(-1)
+    throw new Error('Failed to generate build environment information')
   }
   console.log(buildInfo)
 }
@@ -91,9 +86,7 @@ ${join(WASM_SRC, 'src')}/*.c \
 -o ${join(WASM_OUT, 'llhttp.wasm')} \
 ${WASM_LDLIBS}`, { stdio: 'inherit' })
 
-if (hasOptimizer) {
-  execSync(`${WASM_OPT} ${WASM_OPT_FLAGS} -o ${join(WASM_OUT, 'llhttp.wasm')} ${join(WASM_OUT, 'llhttp.wasm')}`, { stdio: 'inherit' })
-}
+execFileSync(WASM_OPT, [...wasmOptFlags, '-o', join(WASM_OUT, 'llhttp.wasm'), join(WASM_OUT, 'llhttp.wasm')], { stdio: 'inherit' })
 writeWasmChunk('llhttp.wasm', 'llhttp-wasm.js')
 
 // Build wasm simd binary
@@ -103,9 +96,17 @@ ${join(WASM_SRC, 'src')}/*.c \
 -o ${join(WASM_OUT, 'llhttp_simd.wasm')} \
 ${WASM_LDLIBS}`, { stdio: 'inherit' })
 
-if (hasOptimizer) {
-  execSync(`${WASM_OPT} ${WASM_OPT_FLAGS} --enable-simd -o ${join(WASM_OUT, 'llhttp_simd.wasm')} ${join(WASM_OUT, 'llhttp_simd.wasm')}`, { stdio: 'inherit' })
-}
+execFileSync(
+  WASM_OPT,
+  [
+    ...wasmOptFlags,
+    '--enable-simd',
+    '-o',
+    join(WASM_OUT, 'llhttp_simd.wasm'),
+    join(WASM_OUT, 'llhttp_simd.wasm')
+  ],
+  { stdio: 'inherit' }
+)
 writeWasmChunk('llhttp_simd.wasm', 'llhttp_simd-wasm.js')
 
 // For compatibility with Node.js' `configure --shared-builtin-undici/undici-path ...`

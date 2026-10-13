@@ -4,9 +4,12 @@ const { EventEmitter } = require('node:events')
 const { describe, test } = require('node:test')
 const assert = require('node:assert/strict')
 const { Agent, Pool, request } = require('../..')
+const net = require('node:net')
+const { once } = require('node:events')
 const {
   kBusy,
   kConnected,
+  kPending,
   kRunning,
   kUrl
 } = require('../../lib/core/symbols')
@@ -127,6 +130,109 @@ describe('Agent dispatcher lifecycle', () => {
     assert.equal(dispatchers[0].closed, true)
     assert.equal(agent.dispatch(opts, handler), true)
     assert.equal(dispatchers.length, 2)
+  })
+
+  test('keeps a dispatcher that still has pending requests', async t => {
+    const dispatchers = []
+    const agent = new Agent({
+      factory (origin) {
+        const dispatcher = new FakeDispatcher(origin)
+        dispatchers.push(dispatcher)
+        return dispatcher
+      }
+    })
+    t.after(() => agent.destroy())
+
+    const opts = {
+      origin: 'http://example.test',
+      path: '/',
+      method: 'GET'
+    }
+
+    agent.dispatch(opts, handler)
+
+    // Disconnected and not busy, but requests were requeued for a
+    // replacement connection.
+    dispatchers[0][kPending] = 1
+    dispatchers[0].emit(
+      'disconnect',
+      new URL(opts.origin),
+      [dispatchers[0]],
+      new Error('connection closed')
+    )
+
+    assert.equal(dispatchers[0].closed, false)
+    assert.equal(agent.dispatch(opts, handler), true)
+    assert.equal(dispatchers.length, 1)
+
+    dispatchers[0][kPending] = 0
+    dispatchers[0].emit('drain', new URL(opts.origin), [dispatchers[0]])
+
+    assert.equal(dispatchers[0].closed, true)
+  })
+
+  test('keeps a Pool whose pipelined requests were requeued after connection: close', async t => {
+    // The first connection answers only the first of two pipelined requests,
+    // with `connection: close`. The second is requeued on the pool's client,
+    // which reconnects for it. The Agent must keep that pool rather than close
+    // it on 'disconnect' and build a new one for the next request.
+    let connections = 0
+    const server = net.createServer((socket) => {
+      const first = connections++ === 0
+      let buf = ''
+      let warm = !first
+      socket.on('error', () => {})
+      socket.on('data', (chunk) => {
+        buf += chunk
+        if (!warm) {
+          warm = true
+          buf = ''
+          socket.write('HTTP/1.1 200 OK\r\ncontent-length: 1\r\n\r\nw')
+          return
+        }
+        if (first) {
+          if (buf.split('\r\n\r\n').length - 1 < 2 || socket.replied) {
+            return
+          }
+          socket.replied = true
+          socket.end('HTTP/1.1 200 OK\r\ncontent-length: 1\r\nconnection: close\r\n\r\na')
+          return
+        }
+        while (buf.includes('\r\n\r\n')) {
+          buf = buf.slice(buf.indexOf('\r\n\r\n') + 4)
+          socket.write('HTTP/1.1 200 OK\r\ncontent-length: 1\r\n\r\nb')
+        }
+      })
+    })
+    t.after(() => server.close())
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+
+    const pools = []
+    const agent = new Agent({
+      pipelining: 10,
+      factory (origin, opts) {
+        const pool = new Pool(origin, { ...opts, connections: 1 })
+        pools.push(pool)
+        return pool
+      }
+    })
+    t.after(() => agent.destroy())
+
+    const origin = `http://127.0.0.1:${server.address().port}`
+    await agent.request({ origin, path: '/warm', method: 'GET' }).then((r) => r.body.text())
+    await new Promise((resolve) => setImmediate(resolve))
+
+    const results = await Promise.all([
+      agent.request({ origin, path: '/1', method: 'GET', blocking: false }).then((r) => r.body.text()),
+      agent.request({ origin, path: '/2', method: 'GET', blocking: false }).then((r) => r.body.text())
+    ])
+    assert.deepEqual(results, ['a', 'b'])
+    assert.equal(pools[0].closed, false)
+
+    assert.equal(await agent.request({ origin, path: '/3', method: 'GET' }).then((r) => r.body.text()), 'b')
+    assert.equal(pools.length, 1)
+    assert.equal(connections, 2)
   })
 
   test('keeps a custom dispatcher without private lifecycle symbols', async t => {

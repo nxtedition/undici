@@ -615,3 +615,60 @@ test('Blob subclass metadata cannot inject headers', async (t) => {
   assert.strictEqual(requests, 0)
   assert.strictEqual(connections, 0)
 })
+
+// A closed stream body is skipped, but a stream that closed because it
+// errored used to be skipped too: the request went out with an empty body and
+// succeeded, silently replacing the upload with nothing.
+test('an errored, closed stream body fails the request with its error', async (t) => {
+  let requests = 0
+  const server = createServer((req, res) => {
+    requests++
+    req.resume()
+    res.end()
+  })
+  t.after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(() => client.destroy())
+
+  const failure = new Error('upload source failed')
+  const body = new Readable({ read () {} })
+  body.on('error', () => {})
+  body.destroy(failure)
+  await new Promise((resolve) => body.once('close', resolve))
+
+  await assert.rejects(
+    withTimeout(client.request({ path: '/', method: 'PUT', body }), 5e3, 'request did not settle'),
+    (err) => err === failure
+  )
+  assert.strictEqual(requests, 0, 'nothing was sent')
+})
+
+test('a cleanly finished, closed stream body is sent as an empty body', async (t) => {
+  const received = []
+  const server = createServer(async (req, res) => {
+    let length = 0
+    for await (const chunk of req) {
+      length += chunk.length
+    }
+    received.push({ length, contentLength: req.headers['content-length'] })
+    res.end()
+  })
+  t.after(() => server.close())
+  server.listen(0)
+  await once(server, 'listening')
+
+  const client = new Client(`http://localhost:${server.address().port}`)
+  t.after(() => client.destroy())
+
+  const body = Readable.from([])
+  body.resume()
+  await new Promise((resolve) => body.once('close', resolve))
+
+  const { statusCode, body: res } = await client.request({ path: '/', method: 'PUT', body })
+  await res.dump()
+  assert.strictEqual(statusCode, 200)
+  assert.deepStrictEqual(received, [{ length: 0, contentLength: '0' }])
+})

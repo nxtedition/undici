@@ -1551,6 +1551,115 @@ test('connection reset errors on a truncated keep-alive Content-Length response 
   await t.completed
 })
 
+// Resolves with null once the response completes, or with its error. The
+// handler pauses at onHeaders and resumes only after the reset was handled.
+async function pausedHeadersAtReset (response) {
+  const server = createNetServer((socket) => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      socket.write(response)
+      setTimeout(() => socket.resetAndDestroy(), 50)
+    })
+  })
+  after(() => server.close())
+  await EE.once(server.listen(0, '127.0.0.1'), 'listening')
+
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
+  after(() => client.destroy())
+
+  return new Promise((resolve) => {
+    client.dispatch({ path: '/', method: 'GET' }, {
+      onConnect () {},
+      onHeaders (statusCode, headers, resume) {
+        setTimeout(resume, 100)
+        return false
+      },
+      onData () {
+        return true
+      },
+      onComplete () {
+        resolve(null)
+      },
+      onError: resolve
+    })
+  })
+}
+
+// A 304 is complete once its headers are parsed, whatever its Content-Length
+// says, and so is a 204 without a non-zero Content-Length. A reset while the
+// handler is paused must not fail them.
+for (const [label, response] of [
+  ['keep-alive 304 with Content-Length', 'HTTP/1.1 304 Not Modified\r\nContent-Length: 5\r\n\r\n'],
+  ['keep-alive 304 without Content-Length', 'HTTP/1.1 304 Not Modified\r\n\r\n'],
+  ['304 with Content-Length and Connection: close', 'HTTP/1.1 304 Not Modified\r\nContent-Length: 5\r\nConnection: close\r\n\r\n'],
+  ['keep-alive 204', 'HTTP/1.1 204 No Content\r\n\r\n']
+]) {
+  test(`connection reset completes a ${label} paused at its headers`, async () => {
+    assert.strictEqual(await pausedHeadersAtReset(response), null)
+  })
+}
+
+for (const [label, response] of [
+  // RFC 9110 §8.6 forbids it; the fork rejects it (see client-304-content-length.js).
+  ['204 with Content-Length', 'HTTP/1.1 204 No Content\r\nContent-Length: 5\r\n\r\n'],
+  ['200 whose Content-Length body never arrived', 'HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n']
+]) {
+  test(`connection reset still fails a ${label} paused at its headers`, async () => {
+    const err = await pausedHeadersAtReset(response)
+    assert.strictEqual(err?.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
+  })
+}
+
+// The ECONNRESET branch completes an EOF-delimited response without recording
+// socket[kError]. An async iterable request body that is still being written
+// must still be terminated: writeIterable used to wait for a 'drain' that a
+// destroyed socket never emits, so the iterator was never returned and its
+// finally block never ran.
+test('connection reset terminates an iterable body after an EOF-delimited response', async (t) => {
+  t = tspl(t, { plan: 3 })
+
+  const server = createNetServer((socket) => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      socket.write('HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nok')
+      setTimeout(() => socket.resetAndDestroy(), 50)
+    })
+  })
+  after(() => server.close())
+  await EE.once(server.listen(0, '127.0.0.1'), 'listening')
+
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
+  after(() => client.destroy())
+
+  const { promise: responded, resolve: release } = Promise.withResolvers()
+  const { promise: finalized, resolve: onFinalized } = Promise.withResolvers()
+
+  async function * body () {
+    try {
+      yield 'hello'
+      await responded
+      while (true) {
+        yield Buffer.alloc(1024)
+      }
+    } finally {
+      onFinalized()
+    }
+  }
+
+  const { statusCode, body: res } = await client.request({ path: '/', method: 'POST', body: body() })
+  t.strictEqual(statusCode, 200)
+  t.strictEqual(await res.text(), 'ok')
+  release()
+
+  let timer
+  const timeout = new Promise((resolve, reject) => {
+    timer = setTimeout(() => reject(new Error('iterable body was never terminated')), 5e3)
+  })
+  await Promise.race([finalized, timeout]).finally(() => clearTimeout(timer))
+  t.ok(true)
+  await t.completed
+})
+
 test('only one streaming req at a time', async (t) => {
   t = tspl(t, { plan: 7 })
 
@@ -2250,38 +2359,38 @@ test('async iterator early return closes early', async (t) => {
   await t.completed
 })
 
-test('async iterator yield unsupported TypedArray', {
-  skip: !!require('stream')._isArrayBufferView
-}, async (t) => {
-  t = tspl(t, { plan: 3 })
-  const server = createServer((req, res) => {
-    req.on('end', () => {
-      res.writeHead(200)
-      res.end()
-    })
+test('async iterator body sends any ArrayBufferView or ArrayBuffer chunk byte for byte', async (t) => {
+  // Only the bytes each view covers are sent, whatever its element type,
+  // offset or length.
+  const cases = [
+    [new Int32Array([1]), Buffer.from(new Int32Array([1]).buffer)],
+    [new Float64Array([1]), Buffer.from(new Float64Array([1]).buffer)],
+    [new DataView(new Uint8Array([0xde, 0xad, 0xbe, 0xef]).buffer, 1, 2), Buffer.from([0xad, 0xbe])],
+    [Buffer.from('abcdef').subarray(2, 4), Buffer.from('cd')],
+    [new Uint8Array([1, 2, 3]).buffer, Buffer.from([1, 2, 3])]
+  ]
+
+  const server = createServer(async (req, res) => {
+    const chunks = []
+    for await (const chunk of req) {
+      chunks.push(chunk)
+    }
+    res.end(Buffer.concat(chunks))
   })
   after(() => server.close())
+  await EE.once(server.listen(0), 'listening')
 
-  server.listen(0, () => {
-    const client = new Client(`http://localhost:${server.address().port}`, {
-      bodyTimeout: 0
-    })
-    after(() => client.close())
-    const body = (async function * () {
-      try {
-        yield new Int32Array([1])
-        t.fail('should not get here, iterator should be destroyed')
-      } finally {
-        t.ok(true, 'pass')
-      }
-    })()
-    client.request({ path: '/', method: 'POST', body }, (err) => {
-      t.ok(err)
-      t.strictEqual(err.code, 'ERR_INVALID_ARG_TYPE')
-    })
-  })
+  const client = new Client(`http://localhost:${server.address().port}`)
+  after(() => client.close())
 
-  await t.completed
+  for (const [chunk, expected] of cases) {
+    const { body } = await client.request({
+      path: '/',
+      method: 'POST',
+      body: (async function * () { yield chunk })()
+    })
+    assert.deepStrictEqual(Buffer.from(await body.arrayBuffer()), expected, chunk.constructor.name)
+  }
 })
 
 test('async iterator yield object error', async (t) => {

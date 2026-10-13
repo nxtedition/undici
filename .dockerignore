@@ -1,3 +1,9 @@
 # AI agent private workspaces (.codex-private, .claude-private, ...)
 .claude
 **/.*-private
+
+# Local AI workspaces and private scratch files
+**/.claude
+**/.codex
+**/.cursor
+**/.aider*
