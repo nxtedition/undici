@@ -20,8 +20,10 @@ created. It has nothing left to read, so:
 
 - If it closed because it errored (`body.errored` is set), the request fails
   with that error and nothing is sent.
-- Otherwise the request is sent with an empty body (`content-length: 0`). That
-  includes a stream destroyed without an error before it ended
+- Otherwise the request is sent with an empty body. Methods that normally
+  carry a payload, such as POST and PUT, send `content-length: 0`; other
+  methods may omit that header. This includes a stream destroyed without an
+  error before it ended
   (`body.readableEnded === false`), such as one whose reader was cancelled
   midway: the incomplete upload is not detected.
 
