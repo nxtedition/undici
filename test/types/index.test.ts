@@ -73,10 +73,16 @@ async function types () {
       yield 'hello'
       yield Buffer.from(' world')
       yield new ArrayBuffer(0)
+      yield new SharedArrayBuffer(0)
     })(),
     upgrade: null,
     typeOfService: 16
   }, handler)
+
+  client.request({ path: '/', method: 'POST', body: [new SharedArrayBuffer(2)] })
+
+  // @ts-expect-error SharedArrayBuffer is supported only as an iterable chunk.
+  client.request({ path: '/', method: 'POST', body: new SharedArrayBuffer(2) })
 
   client.dispatch({
     path: '/',

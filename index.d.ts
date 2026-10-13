@@ -70,7 +70,7 @@ export type HeadersInit =
   | Iterable<readonly [string, HeaderValue | readonly HeaderValue[]]>
   | null
 
-export type RequestBodyChunk = string | ArrayBuffer | ArrayBufferView
+export type RequestBodyChunk = string | ArrayBuffer | SharedArrayBuffer | ArrayBufferView
 
 export type RequestBody =
   | string
