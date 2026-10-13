@@ -6,6 +6,10 @@ const net = require('node:net')
 const { test } = require('node:test')
 const { Client } = require('..')
 
+// Pins the 204/304 Content-Length handling documented in README.md ("204 and
+// 304 responses"), which deliberately differs from upstream undici
+// (nodejs/undici#5864). Change these tests only together with that section.
+
 async function listen (server) {
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
