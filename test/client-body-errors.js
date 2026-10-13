@@ -707,8 +707,13 @@ test('a stream body destroyed without an error before it ended is sent as an emp
 })
 
 test('a stream body destroyed without an error while it is sent fails the request', async (t) => {
+  const body = new Readable({ read () {} })
+  body.push('partial')
+
   const server = createServer((req, res) => {
     req.on('error', () => {})
+    // Destroy only once body bytes have arrived, so the upload is in flight.
+    req.once('data', () => body.destroy())
     req.resume()
   })
   t.after(() => server.close())
@@ -717,10 +722,6 @@ test('a stream body destroyed without an error while it is sent fails the reques
 
   const client = new Client(`http://localhost:${server.address().port}`)
   t.after(() => client.destroy())
-
-  const body = new Readable({ read () {} })
-  body.push('partial')
-  setTimeout(() => body.destroy(), 50)
 
   await assert.rejects(
     withTimeout(client.request({ path: '/', method: 'PUT', body }), 5e3, 'request did not settle'),
