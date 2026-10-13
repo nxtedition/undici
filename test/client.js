@@ -1551,6 +1551,64 @@ test('connection reset errors on a truncated keep-alive Content-Length response 
   await t.completed
 })
 
+// Resolves with null once the response completes, or with its error. The
+// handler pauses at onHeaders and resumes only after the reset was handled.
+async function pausedHeadersAtReset (response) {
+  const server = createNetServer((socket) => {
+    socket.on('error', () => {})
+    socket.once('data', () => {
+      socket.write(response)
+      setTimeout(() => socket.resetAndDestroy(), 50)
+    })
+  })
+  after(() => server.close())
+  await EE.once(server.listen(0, '127.0.0.1'), 'listening')
+
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
+  after(() => client.destroy())
+
+  return new Promise((resolve) => {
+    client.dispatch({ path: '/', method: 'GET' }, {
+      onConnect () {},
+      onHeaders (statusCode, headers, resume) {
+        setTimeout(resume, 100)
+        return false
+      },
+      onData () {
+        return true
+      },
+      onComplete () {
+        resolve(null)
+      },
+      onError: resolve
+    })
+  })
+}
+
+// A 204 or 304 is complete once its headers are parsed, whatever its
+// Content-Length says, so a reset while the handler is paused must not fail it.
+for (const [label, response] of [
+  ['keep-alive 304 with Content-Length', 'HTTP/1.1 304 Not Modified\r\nContent-Length: 5\r\n\r\n'],
+  ['keep-alive 304 without Content-Length', 'HTTP/1.1 304 Not Modified\r\n\r\n'],
+  ['304 with Content-Length and Connection: close', 'HTTP/1.1 304 Not Modified\r\nContent-Length: 5\r\nConnection: close\r\n\r\n'],
+  ['keep-alive 204', 'HTTP/1.1 204 No Content\r\n\r\n']
+]) {
+  test(`connection reset completes a ${label} paused at its headers`, async () => {
+    assert.strictEqual(await pausedHeadersAtReset(response), null)
+  })
+}
+
+for (const [label, response] of [
+  // RFC 9110 §8.6 forbids it; the fork rejects it (see client-304-content-length.js).
+  ['204 with Content-Length', 'HTTP/1.1 204 No Content\r\nContent-Length: 5\r\n\r\n'],
+  ['200 whose Content-Length body never arrived', 'HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n']
+]) {
+  test(`connection reset still fails a ${label} paused at its headers`, async () => {
+    const err = await pausedHeadersAtReset(response)
+    assert.strictEqual(err?.code, 'UND_ERR_RES_CONTENT_LENGTH_MISMATCH')
+  })
+}
+
 // The ECONNRESET branch completes an EOF-delimited response without recording
 // socket[kError]. An async iterable request body that is still being written
 // must still be terminated: writeIterable used to wait for a 'drain' that a
