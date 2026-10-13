@@ -16,8 +16,9 @@ treats their `Content-Length`:
 | bytes after a 304 with a non-zero `Content-Length` | parsed as the next pipelined response | discarded with the connection; pipelined requests are resent |
 | 204 with a non-zero `Content-Length` | fails with `ResponseContentLengthMismatchError` (RFC 9110 §8.6 forbids it) | succeeds and closes the connection |
 
-A 204 or 304 that also carries `Transfer-Encoding` closes the connection, so
-bytes after it can't be taken for a pipelined response.
+A 204 or 304 to a non-HEAD request that also carries `Transfer-Encoding`
+closes the connection, so bytes after it can't be taken for a pipelined
+response.
 
 ## Async context
 
