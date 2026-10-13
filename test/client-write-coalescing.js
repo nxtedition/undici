@@ -160,6 +160,44 @@ test('interleaves large and small chunks in order', async (t) => {
   }
 })
 
+test('coalesces and frames chunks at the 2 KiB boundary', async (t) => {
+  const server = await startEchoServer(t)
+  const written = []
+  const client = new Client(`http://localhost:${server.address().port}`, {
+    connect (opts, callback) {
+      const socket = net.connect(Number(opts.port), opts.hostname)
+      const write = socket.write
+      socket.write = function (chunk, ...args) {
+        written.push(chunk)
+        return write.call(this, chunk, ...args)
+      }
+      socket.once('connect', () => callback(null, socket))
+      socket.once('error', (err) => callback(err, null))
+      return socket
+    }
+  })
+  t.after(() => client.destroy())
+
+  for (const size of [2047, 2048, 2049]) {
+    await t.test(`${size} bytes`, async () => {
+      for (const chunk of [Buffer.alloc(size, 'b'), 'é'.repeat(Math.floor(size / 2)) + (size % 2 ? 'b' : '')]) {
+        const expected = Buffer.concat([Buffer.from('before,'), Buffer.from(chunk), Buffer.from(',after')])
+        for (const headers of [undefined, { 'content-length': String(expected.length) }]) {
+          const start = written.length
+          const actual = await echo(client, (function * () {
+            yield 'before,'
+            yield chunk
+            yield ',after'
+          })(), headers)
+          assert.ok(actual.equals(expected), headers ? 'content-length' : 'chunked')
+          assert.strictEqual(written.length - start, size <= 2048 ? 1 : 3)
+          assert.strictEqual(written.slice(start).includes(chunk), size > 2048)
+        }
+      }
+    })
+  }
+})
+
 test('later requests on a connection share its slab without overwriting earlier writes', async (t) => {
   const server = await startEchoServer(t)
 
