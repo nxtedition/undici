@@ -1585,8 +1585,9 @@ async function pausedHeadersAtReset (response) {
   })
 }
 
-// A 204 or 304 is complete once its headers are parsed, whatever its
-// Content-Length says, so a reset while the handler is paused must not fail it.
+// A 304 is complete once its headers are parsed, whatever its Content-Length
+// says, and so is a 204 without a non-zero Content-Length. A reset while the
+// handler is paused must not fail them.
 for (const [label, response] of [
   ['keep-alive 304 with Content-Length', 'HTTP/1.1 304 Not Modified\r\nContent-Length: 5\r\n\r\n'],
   ['keep-alive 304 without Content-Length', 'HTTP/1.1 304 Not Modified\r\n\r\n'],
