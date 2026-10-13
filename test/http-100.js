@@ -1,5 +1,6 @@
 'use strict'
 
+const assert = require('node:assert/strict')
 const { tspl } = require('@matteo.collina/tspl')
 const { test, after } = require('node:test')
 const { Client, errors } = require('..')
@@ -68,12 +69,39 @@ test('error 103 body', async (t) => {
   await t.completed
 })
 
-test('error 100 body', async (t) => {
-  t = tspl(t, { plan: 2 })
+test('ignore unsolicited 100 Continue response', async (t) => {
+  t = tspl(t, { plan: 5 })
 
-  const server = net.createServer((socket) => {
-    socket.write('HTTP/1.1 100 Early Hints\r\n')
-    socket.write('\r\n')
+  let connections = 0
+  const server = net.createServer({ joinDuplicateHeaders: true }, (socket) => {
+    connections++
+    let requests = 0
+    let received = ''
+    socket.on('data', (chunk) => {
+      received += chunk
+      if (!received.includes('\r\n\r\n')) {
+        return
+      }
+
+      received = ''
+      requests++
+      if (requests === 1) {
+        socket.write(
+          'HTTP/1.1 100 Continue\r\n\r\n' +
+          'HTTP/1.1 200 OK\r\n' +
+          'content-length: 5\r\n' +
+          'connection: keep-alive\r\n\r\n' +
+          'hello'
+        )
+      } else {
+        socket.end(
+          'HTTP/1.1 200 OK\r\n' +
+          'content-length: 5\r\n' +
+          'connection: close\r\n\r\n' +
+          'world'
+        )
+      }
+    })
   })
   after(() => server.close())
   server.listen(0)
@@ -82,15 +110,15 @@ test('error 100 body', async (t) => {
   const client = new Client(`http://localhost:${server.address().port}`)
   after(() => client.close())
 
-  client.request({
-    path: '/',
-    method: 'GET'
-  }, (err) => {
-    t.strictEqual(err.message, 'bad response')
-  })
-  client.on('disconnect', () => {
-    t.ok(true, 'pass')
-  })
+  const first = await client.request({ path: '/', method: 'GET' })
+  t.strictEqual(first.statusCode, 200)
+  t.strictEqual(await first.body.text(), 'hello')
+
+  const second = await client.request({ path: '/', method: 'GET' })
+  t.strictEqual(second.statusCode, 200)
+  t.strictEqual(await second.body.text(), 'world')
+  t.strictEqual(connections, 1)
+
   await t.completed
 })
 
@@ -153,3 +181,40 @@ test('1xx response without timeouts', async t => {
   })
   await t.completed
 })
+
+for (const informationalStatus of [100, 103]) {
+  test(`CONNECT waits for its final response after ${informationalStatus}`, async (t) => {
+    const server = net.createServer((socket) => {
+      t.after(() => socket.destroy())
+      socket.once('data', () => {
+        socket.end(
+          `HTTP/1.1 ${informationalStatus} Informational\r\n\r\n` +
+          'HTTP/1.1 200 Connection Established\r\nx-tunnel: established\r\n\r\ntunnel'
+        )
+      })
+    })
+    t.after(() => server.close())
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+
+    const client = new Client(`http://127.0.0.1:${server.address().port}`)
+    t.after(() => client.destroy())
+    const informational = []
+    const { statusCode, headers, socket } = await new Promise((resolve, reject) => {
+      client.dispatch({ path: 'localhost:80', method: 'CONNECT' }, {
+        onConnect () {},
+        onHeaders (code) { informational.push(code) },
+        onUpgrade (statusCode, headers, socket) { resolve({ statusCode, headers, socket }) },
+        onComplete () { reject(new Error('unexpected normal response completion')) },
+        onError: reject
+      })
+    })
+    t.after(() => socket.destroy())
+    assert.strictEqual(statusCode, 200)
+    assert.deepStrictEqual(informational, [informationalStatus])
+    assert.strictEqual(headers['x-tunnel'], 'established')
+    const chunks = []
+    for await (const chunk of socket) chunks.push(chunk)
+    assert.strictEqual(Buffer.concat(chunks).toString(), 'tunnel')
+  })
+}
