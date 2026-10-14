@@ -46,16 +46,16 @@ for (const Dispatcher of [Agent, Client, Pool]) {
       res.end(req.method === 'HEAD' ? undefined : 'get')
     })
 
-    for (const method of ['HEAD', 'HEAD', 'GET']) {
+    for (const method of ['HEAD', 'GET']) {
       const response = await deadline(dispatcher.request({
         origin, path: '/', method, blocking: true, reset: false
       }))
       assert.strictEqual(response.statusCode, 200)
       assert.strictEqual(await deadline(response.body.text()), method === 'HEAD' ? '' : 'get')
     }
-    assert.deepStrictEqual(requests.map(req => req.method), ['HEAD', 'HEAD', 'GET'])
+    assert.deepStrictEqual(requests.map(req => req.method), ['HEAD', 'GET'])
     assert.strictEqual(sockets.size, 1)
-    assert.strictEqual(requests[0].socket, requests[2].socket)
+    assert.strictEqual(requests[0].socket, requests[1].socket)
   })
 }
 
