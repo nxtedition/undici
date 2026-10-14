@@ -96,27 +96,29 @@ function dispatch (dispatcher, options, callbacks = {}) {
   })
 }
 
-test('reentrant HEAD dispatch preserves the next request blocking through informational headers', async (t) => {
-  const informational = Promise.withResolvers()
-  const admitted = []
-  let secondResponse
-  const { dispatcher, origin, requests, sockets } = await fixture(t, Client, (req, res) => {
-    if (req.url === '/second') {
-      secondResponse = res
-      res.writeEarlyHints({ link: '</style.css>; rel=preload' })
-    } else {
-      res.end()
-    }
-  }, 3)
+for (const [method, blocking, reentrant] of [
+  ['HEAD', true, true],
+  ['HEAD', false, true],
+  ['GET', false, true],
+  ['HEAD', false, false],
+  ['GET', false, false]
+]) {
+  test(`${reentrant ? 'reentrant' : 'pipelined'} ${blocking ? 'blocking' : 'nonblocking'} ${method} preserves the next HEAD blocking`, async (t) => {
+    const informational = Promise.withResolvers()
+    const admitted = []
+    let secondResponse
+    const { dispatcher, origin, requests, sockets } = await fixture(t, Client, (req, res) => {
+      if (req.url === '/second') {
+        secondResponse = res
+        res.writeEarlyHints({ link: '</style.css>; rel=preload' })
+      } else {
+        res.end()
+      }
+    }, 3)
 
-  let second
-  let get
-  const first = dispatch(dispatcher, {
-    origin, path: '/first', method: 'HEAD', blocking: true, reset: false
-  }, {
-    onConnect () { admitted.push('first') },
-    onHeaders (statusCode) {
-      assert.strictEqual(statusCode, 200)
+    let second
+    let get
+    function queueRemaining () {
       second = dispatch(dispatcher, {
         origin, path: '/second', method: 'HEAD', blocking: true, reset: false
       }, {
@@ -131,15 +133,25 @@ test('reentrant HEAD dispatch preserves the next request blocking through inform
       second.catch(informational.reject)
       get.catch(informational.reject)
     }
-  })
-  first.catch(informational.reject)
+    const first = dispatch(dispatcher, {
+      origin, path: '/first', method, blocking, reset: false
+    }, {
+      onConnect () { admitted.push('first') },
+      onHeaders (statusCode) {
+        assert.strictEqual(statusCode, 200)
+        if (reentrant) queueRemaining()
+      }
+    })
+    first.catch(informational.reject)
+    if (!reentrant) queueRemaining()
 
-  await deadline(informational.promise)
-  await waitImmediate()
-  assert.deepStrictEqual(admitted, ['first', 'second'])
-  secondResponse.end()
-  await deadline(Promise.all([first, second, get]))
-  assert.deepStrictEqual(admitted, ['first', 'second', 'get'])
-  assert.deepStrictEqual(requests.map(req => req.url), ['/first', '/second', '/get'])
-  assert.strictEqual(sockets.size, 1)
-})
+    await deadline(informational.promise)
+    await waitImmediate()
+    assert.deepStrictEqual(admitted, ['first', 'second'])
+    secondResponse.end()
+    await deadline(Promise.all([first, second, get]))
+    assert.deepStrictEqual(admitted, ['first', 'second', 'get'])
+    assert.deepStrictEqual(requests.map(req => req.url), ['/first', '/second', '/get'])
+    assert.strictEqual(sockets.size, 1)
+  })
+}
