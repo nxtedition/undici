@@ -2,7 +2,11 @@
 
 const { describe, test, after } = require('node:test')
 const assert = require('node:assert/strict')
+const fs = require('node:fs')
 const http = require('node:http')
+const https = require('node:https')
+const path = require('node:path')
+const { once } = require('node:events')
 const {
   Agent,
   errors,
@@ -34,6 +38,39 @@ test('Agent', t => {
   const p = tspl(t, { plan: 1 })
 
   p.doesNotThrow(() => new Agent())
+})
+
+test('Agent preserves function-valued TLS options', async (t) => {
+  const server = https.createServer({
+    key: fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'key.pem')),
+    cert: fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'cert.pem'))
+  }, (_req, res) => {
+    res.end('ok')
+  })
+  t.after(closeServerAsPromise(server))
+
+  server.listen(0, '127.0.0.1')
+  await once(server, 'listening')
+
+  const expected = new Error('rejected by custom checkServerIdentity')
+  let identityChecks = 0
+  const dispatcher = new Agent({
+    tls: {
+      ca: fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'ca.pem')),
+      servername: 'agent1',
+      checkServerIdentity () {
+        identityChecks++
+        return expected
+      }
+    }
+  })
+  t.after(() => dispatcher.close())
+
+  await assert.rejects(
+    request(`https://127.0.0.1:${server.address().port}`, { dispatcher }),
+    err => err === expected
+  )
+  assert.strictEqual(identityChecks, 1)
 })
 
 test('agent should call callback after closing internal pools', async (t) => {
