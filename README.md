@@ -71,7 +71,9 @@ A request holds one of the scheduler's slots while it waits on the network:
 
 - **Writes.** Once the socket pushes back, a stream or iterable body pauses
   until it is granted a slot, then holds it until the socket drains. Buffer
-  and string bodies are written at once and aren't scheduled.
+  and string bodies over 64 KiB are written in 64 KiB chunks and pause the
+  same way; like stream bodies, they wait for the requests pipelined before
+  them to finish. Smaller ones are written at once and aren't scheduled.
 - **Reads.** Once the response body has read everything the socket received,
   it waits for a slot before reading more, then holds it until more bytes
   arrive. A body queued for a slot leaves its bytes unread, so the server's
