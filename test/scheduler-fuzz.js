@@ -259,6 +259,52 @@ function interrupt (state) {
 }
 
 for (const protocol of ['http', 'https']) {
+  test(`scheduler can be collected after a response on a live client (${protocol})`, { timeout: 15000 }, async () => {
+    assert.equal(typeof global.gc, 'function', 'run with --expose-gc')
+    let response
+    const server = (protocol === 'https' ? https : http).createServer(protocol === 'https' ? pem : {}, (req, res) => {
+      response = res
+      res.writeHead(200, { 'content-length': 2 })
+      res.write('a')
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    const client = new Client(`${protocol}://127.0.0.1:${server.address().port}`, {
+      tls: { rejectUnauthorized: false },
+      keepAliveTimeout: 60000,
+      keepAliveMaxTimeout: 60000
+    })
+    let granted = 0
+    let released = 0
+    try {
+      const weak = await (async () => {
+        const scheduler = {
+          acquire (fn) {
+            granted++
+            fn()
+            if (granted === 1) setImmediate(() => response.end('b'))
+          },
+          release () { released++ }
+        }
+        const weak = new WeakRef(scheduler)
+        const { body } = await client.request({ path: '/', method: 'GET', scheduler })
+        assert.equal(await body.text(), 'ab')
+        return weak
+      })()
+      assert.ok(granted > 0)
+      assert.equal(released, granted)
+      for (let i = 0; i < 20 && weak.deref() !== undefined; i++) {
+        await tick()
+        global.gc()
+      }
+      assert.equal(client[kSocket].destroyed, false, 'the connection must remain reusable')
+      assert.equal(weak.deref(), undefined, 'the parser retained a completed request scheduler')
+    } finally {
+      await client.destroy()
+      server.closeAllConnections()
+      await new Promise(resolve => server.close(resolve))
+    }
+  })
   for (const kind of ['read', 'stream', 'iterable']) {
     test(`scheduler acquire failure rejects a ${kind} request (${protocol})`, { timeout: 15000 }, async () => {
       const scheduler = new Scheduler(1, 'sync')

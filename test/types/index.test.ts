@@ -18,6 +18,14 @@ import undiciRequire = require('../..')
 
 function acceptsUnknown (_value: unknown) {}
 
+// Published schedulers overload acquire() for an optional opaque argument and
+// accept a narrower priority union than the socket I/O interface.
+declare const overloadedScheduler: {
+  acquire (fn: () => unknown, priority?: -1 | 0 | 1 | 'low' | 'normal' | 'high'): boolean
+  acquire<T> (fn: (opaque: T) => unknown, priority: -1 | 0 | 1 | 'low' | 'normal' | 'high' | undefined, opaque: T): boolean
+  release: (tokens?: number) => void
+}
+
 async function types () {
   const client = new Client('http://localhost', {
     socketPath: '/tmp/undici.sock',
@@ -95,6 +103,7 @@ async function types () {
     priority: 'high'
   })
   client.request({ path: '/', method: 'GET', scheduler: null, priority: -1 })
+  client.request({ path: '/', method: 'GET', scheduler: overloadedScheduler, priority: 'low' })
 
   // @ts-expect-error A scheduler must release the slots it grants.
   client.request({ path: '/', method: 'GET', scheduler: { acquire () {} } })

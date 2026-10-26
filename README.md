@@ -87,6 +87,8 @@ once, and priority decides which go first. A request queued for a slot stops
 sending or reading, so a server may time out a request that waits too long.
 Slots are released when a request finishes, fails or is aborted; one granted
 after that is released at once.
+A completed request's scheduler can be garbage collected while its connection
+stays alive.
 
 Run `npm run test:fuzzing:scheduler` for the HTTP/HTTPS lifecycle matrix and
 seeded contention and pipelining fuzz tests. They check progress, producer
