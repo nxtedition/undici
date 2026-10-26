@@ -81,6 +81,24 @@ async function types () {
 
   client.request({ path: '/', method: 'POST', body: [new SharedArrayBuffer(2)] })
 
+  client.request({
+    path: '/',
+    method: 'PUT',
+    body: [Buffer.from('hello')],
+    scheduler: {
+      acquire (fn: () => void, priority?: number | string) {
+        fn()
+        return priority !== 'never'
+      },
+      release () {}
+    },
+    priority: 'high'
+  })
+  client.request({ path: '/', method: 'GET', scheduler: null, priority: -1 })
+
+  // @ts-expect-error A scheduler must release the slots it grants.
+  client.request({ path: '/', method: 'GET', scheduler: { acquire () {} } })
+
   // @ts-expect-error SharedArrayBuffer is supported only as an iterable chunk.
   client.request({ path: '/', method: 'POST', body: new SharedArrayBuffer(2) })
 

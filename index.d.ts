@@ -101,6 +101,14 @@ export interface AbortEventEmitterLike {
 
 export type RequestSignal = AbortSignal | AbortSignalLike | AbortEventEmitterLike
 
+/** The part of an `@nxtedition/scheduler` `Scheduler` a request uses. */
+export interface Scheduler {
+  /** Calls `fn` once a slot is free, at most once per call. */
+  acquire (fn: () => void, priority?: number | string): unknown
+  /** Returns a slot `acquire()` granted. */
+  release (): void
+}
+
 export interface RequestErrorData<TOpaque = null> {
   opaque: TOpaque | null | undefined
 }
@@ -149,6 +157,14 @@ export namespace Dispatcher {
     idempotent?: boolean
     blocking?: boolean
     typeOfService?: number | null
+    /**
+     * Orders this request's socket I/O against other requests, e.g. with an
+     * `@nxtedition/scheduler` `Scheduler`. See "Scheduled socket I/O" in
+     * README.md.
+     */
+    scheduler?: Scheduler | null
+    /** Priority passed to `scheduler.acquire()`. */
+    priority?: number | string | null
     /** Protocol name for an upgrade request. */
     upgrade?: string | null
     /**
