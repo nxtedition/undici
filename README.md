@@ -78,9 +78,19 @@ A request holds one of the scheduler's slots while it waits on the network:
   TCP window closes and the bandwidth goes to the responses holding slots.
   Waiting for the slot doesn't count toward `bodyTimeout`. A response whose
   socket ends while it waits reads the rest of its body without the slot.
+  If a response starts during an upload, reads continue without a read slot
+  until the upload finishes, so the response cannot block its own upload
+  from getting a write slot.
 
 So the scheduler's concurrency bounds how many requests use the network at
 once, and priority decides which go first. A request queued for a slot stops
 sending or reading, so a server may time out a request that waits too long.
 Slots are released when a request finishes, fails or is aborted; one granted
 after that is released at once.
+
+Run `npm run test:fuzzing:scheduler` for the HTTP/HTTPS lifecycle matrix and
+seeded contention and pipelining fuzz tests. They check progress, producer
+cleanup, byte integrity, per-request slot accounting, and a healthy follow-up
+using the same scheduler. They also run as part of the unit suite. Increase
+the sample count with `SCHEDULER_FUZZ_RUNS=1000`; replay a failing seed with
+`SCHEDULER_FUZZ_SEED=<seed>`.
