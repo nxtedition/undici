@@ -94,13 +94,14 @@ function assertSettled (scheduler) {
   assert.strictEqual(scheduler.overReleased, 0, 'slots released twice')
 }
 
-async function startServer (t, protocol, handler) {
+async function startServer (t, protocol, handler, options) {
   const server = protocol === 'https' ? https.createServer(pem, handler) : http.createServer(handler)
   t.after(() => server.close())
   server.listen(0)
   await once(server, 'listening')
   const client = new Client(`${protocol}://localhost:${server.address().port}`, {
-    tls: { rejectUnauthorized: false }
+    tls: { rejectUnauthorized: false },
+    ...options
   })
   t.after(() => client.destroy())
   return client
@@ -162,6 +163,12 @@ const bodies = {
   })()
 }
 
+// Written in chunks when scheduled. They have no producer to finalize.
+const buffers = {
+  buffer: () => Buffer.alloc(TOTAL, 'a'),
+  string: () => 'a'.repeat(TOTAL)
+}
+
 async function readAll (body) {
   let received = 0
   for await (const chunk of body) {
@@ -185,7 +192,7 @@ test('rejects an invalid scheduler or priority', async (t) => {
 })
 
 for (const protocol of PROTOCOLS) {
-  for (const [kind, createBody] of Object.entries(bodies)) {
+  for (const [kind, createBody] of Object.entries({ ...bodies, ...buffers })) {
     test(`schedules writes of a ${kind} body (${protocol})`, async (t) => {
       const { client } = await startUploadServer(t, protocol)
       const scheduler = new TestScheduler()
@@ -221,6 +228,23 @@ for (const protocol of PROTOCOLS) {
       assertSettled(scheduler)
     })
 
+    test(`releases a held write slot when a ${kind} body is aborted (${protocol})`, async (t) => {
+      // The server never reads, so the socket never drains.
+      const client = await startServer(t, protocol, (req) => req.pause())
+      const scheduler = new TestScheduler()
+
+      const ac = new AbortController()
+      const promise = client.request({ path: '/', method: 'PUT', body: createBody(), scheduler, signal: ac.signal })
+      await waitFor(() => scheduler.running === 1, 'a held write')
+
+      ac.abort()
+      await assert.rejects(promise, { name: 'AbortError' })
+      await waitFor(() => scheduler.running === 0, 'the held slot to be released')
+      assertSettled(scheduler)
+    })
+  }
+
+  for (const [kind, createBody] of Object.entries(bodies)) {
     test(`releases a write slot granted after a ${kind} body was aborted (${protocol})`, async (t) => {
       const { client } = await startUploadServer(t, protocol)
       const scheduler = new TestScheduler()
@@ -245,22 +269,66 @@ for (const protocol of PROTOCOLS) {
       scheduler.resume()
       assertSettled(scheduler)
     })
-
-    test(`releases a held write slot when a ${kind} body is aborted (${protocol})`, async (t) => {
-      // The server never reads, so the socket never drains.
-      const client = await startServer(t, protocol, (req) => req.pause())
-      const scheduler = new TestScheduler()
-
-      const ac = new AbortController()
-      const promise = client.request({ path: '/', method: 'PUT', body: createBody(), scheduler, signal: ac.signal })
-      await waitFor(() => scheduler.running === 1, 'a held write')
-
-      ac.abort()
-      await assert.rejects(promise, { name: 'AbortError' })
-      await waitFor(() => scheduler.running === 0, 'the held slot to be released')
-      assertSettled(scheduler)
-    })
   }
+
+  test(`releases a write slot granted after a buffer body was aborted (${protocol})`, async (t) => {
+    const { client } = await startUploadServer(t, protocol)
+    const scheduler = new TestScheduler()
+    scheduler.pause()
+
+    const ac = new AbortController()
+    const promise = client.request({ path: '/', method: 'PUT', body: buffers.buffer(), scheduler, signal: ac.signal })
+
+    await waitFor(() => scheduler.queue.length > 0, 'a queued write')
+    ac.abort()
+    await assert.rejects(promise, { name: 'AbortError' })
+
+    scheduler.resume()
+    assertSettled(scheduler)
+  })
+
+  test(`writes a buffer body of at most 64 KiB at once (${protocol})`, async (t) => {
+    const { client } = await startUploadServer(t, protocol)
+    const scheduler = new TestScheduler()
+    scheduler.pause()
+
+    const res = await client.request({ path: '/', method: 'PUT', body: Buffer.alloc(64 * 1024), scheduler })
+    assert.strictEqual(await res.body.text(), String(64 * 1024))
+    assert.deepStrictEqual(scheduler.priorities, [], 'a slot was acquired')
+  })
+
+  test(`does not pipeline a scheduled buffer body behind other requests (${protocol})`, async (t) => {
+    let pending = null
+    const methods = []
+    const client = await startServer(t, protocol, (req, res) => {
+      methods.push(req.method)
+      if (req.method === 'GET') {
+        pending = res
+      } else {
+        req.resume().on('end', () => res.end())
+      }
+    }, { pipelining: 2 })
+
+    const get = client.request({ path: '/', method: 'GET' })
+    await waitFor(() => pending !== null, 'the GET to reach the server')
+    const put = client.request({
+      path: '/',
+      method: 'PUT',
+      body: buffers.buffer(),
+      idempotent: true,
+      scheduler: new TestScheduler()
+    })
+
+    // Written behind the GET, the body would still be writing when the GET's
+    // response completes, which fails the PUT.
+    await sleep(200)
+    assert.deepStrictEqual(methods, ['GET'])
+
+    pending.end('ok')
+    assert.strictEqual(await (await get).body.text(), 'ok')
+    assert.strictEqual(await (await put).body.text(), '')
+    assert.deepStrictEqual(methods, ['GET', 'PUT'])
+  })
 
   for (const scheduled of [true, false]) {
     test(`finalizes an iterable body waiting ${scheduled ? 'for a slot' : 'to drain'} when its socket closes (${protocol})`, async (t) => {

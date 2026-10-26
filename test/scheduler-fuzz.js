@@ -14,7 +14,15 @@ const { kSocket } = require('../lib/core/symbols')
 const timers = require('../lib/util/timers')
 
 const CHUNK = Buffer.alloc(256 * 1024, 'a')
+// Written in chunks, so its writes are scheduled too.
+const UPLOAD = Buffer.alloc(128 * 1024, 'u')
 const ACTIONS = ['complete', 'abort', 'destroy-client', 'socket-error', 'peer-close', 'body-error', 'early-response']
+
+// Stream and iterable bodies have a producer to finalize and fail; a buffer
+// body has neither.
+function hasProducer (kind) {
+  return kind === 'stream' || kind === 'iterable'
+}
 
 async function waitFor (predicate, message) {
   const deadline = Date.now() + 5000
@@ -167,6 +175,8 @@ async function fixture (protocol, scheduler, plans) {
           state.finalized++
         }
       })()
+    } else if (state.kind === 'buffer') {
+      body = Buffer.alloc(state.chunks * CHUNK.length, 'a')
     }
     // Attach rejection handlers immediately, including failures before headers.
     state.result = client.request({
@@ -305,7 +315,7 @@ for (const protocol of ['http', 'https']) {
       await new Promise(resolve => server.close(resolve))
     }
   })
-  for (const kind of ['read', 'stream', 'iterable']) {
+  for (const kind of ['read', 'stream', 'iterable', 'buffer']) {
     test(`scheduler acquire failure rejects a ${kind} request (${protocol})`, { timeout: 15000 }, async () => {
       const scheduler = new Scheduler(1, 'sync')
       scheduler.resume()
@@ -372,7 +382,7 @@ for (const protocol of ['http', 'https']) {
       })
     }
   }
-  for (const kind of ['stream', 'iterable']) {
+  for (const kind of ['stream', 'iterable', 'buffer']) {
     test(`scheduler makes progress with a response during a ${kind} upload (${protocol})`, { timeout: 15000 }, async () => {
       const scheduler = new Scheduler(1, 'sync')
       const run = await fixture(protocol, scheduler, [{ kind, action: 'complete', chunks: 64, priority: 0, duplex: true }])
@@ -395,9 +405,10 @@ for (const protocol of ['http', 'https']) {
   }
   // These checkpoints guarantee every destructive action runs both with a
   // queued acquisition and with a genuinely held slot, independently of seeds.
-  for (const kind of ['read', 'stream', 'iterable']) {
+  for (const kind of ['read', 'stream', 'iterable', 'buffer']) {
     for (const queued of [true, false]) {
-      for (const action of ACTIONS.filter(action => action !== 'complete' && (action !== 'early-response' || kind !== 'read'))) {
+      for (const action of ACTIONS.filter(action => action !== 'complete' && (action !== 'early-response' || kind !== 'read') &&
+        (action !== 'body-error' || kind !== 'buffer'))) {
         test(`scheduler ${action}, ${queued ? 'queued' : 'held'} ${kind} (${protocol})`, { timeout: 15000 }, async () => {
           const scheduler = new Scheduler(1, 'sync')
           if (!queued) scheduler.resume()
@@ -420,7 +431,7 @@ for (const protocol of ['http', 'https']) {
             const result = await state.result
             if (action !== 'early-response') assert.ok(result.error, 'failed request unexpectedly succeeded')
             if (action === 'body-error') assert.match(result.error.message, /(?:producer|consumer) failed/)
-            if (kind !== 'read') await waitFor(() => state.finalized === 1, 'upload producer was not finalized exactly once')
+            if (hasProducer(kind)) await waitFor(() => state.finalized === 1, 'upload producer was not finalized exactly once')
             await scheduler.settled()
             await run.probe()
             await scheduler.settled()
@@ -435,7 +446,7 @@ for (const protocol of ['http', 'https']) {
 
   test(`scheduler contention fuzz (${protocol})`, { timeout: 120000 }, async () => {
     const plan = fc.record({
-      kind: fc.constantFrom('read', 'stream', 'iterable'),
+      kind: fc.constantFrom('read', 'stream', 'iterable', 'buffer'),
       action: fc.constantFrom(...ACTIONS),
       priority: fc.oneof(fc.integer({ min: -10, max: 10 }), fc.constantFrom('low', 'high')),
       chunks: fc.integer({ min: 1, max: 8 }),
@@ -443,7 +454,7 @@ for (const protocol of ['http', 'https']) {
       duplex: fc.boolean(),
       ticks: fc.integer({ min: 0, max: 4 })
     }).filter(plan => (plan.kind !== 'read' || plan.action !== 'early-response') &&
-      (plan.action !== 'body-error' || plan.kind === 'read' || plan.chunks >= 3))
+      (plan.action !== 'body-error' || plan.kind === 'read' || (hasProducer(plan.kind) && plan.chunks >= 3)))
     await fc.assert(fc.asyncProperty(
       fc.array(plan, { minLength: 2, maxLength: 5 }),
       fc.integer({ min: 1, max: 3 }),
@@ -479,7 +490,7 @@ for (const protocol of ['http', 'https']) {
           })
           await scheduler.settled()
           for (const state of run.states) {
-            if (state.kind !== 'read') assert.equal(state.finalized, 1, 'producer cleanup missing or repeated')
+            if (hasProducer(state.kind)) assert.equal(state.finalized, 1, 'producer cleanup missing or repeated')
           }
           await run.probe()
           await scheduler.settled()
@@ -499,6 +510,7 @@ for (const protocol of ['http', 'https']) {
     await fc.assert(fc.asyncProperty(
       fc.array(fc.record({
         scheduled: fc.boolean(),
+        upload: fc.boolean(),
         chunks: fc.integer({ min: 1, max: 8 }),
         chunkSize: fc.integer({ min: 1, max: 8192 }),
         pauseTicks: fc.integer({ min: 0, max: 4 })
@@ -510,17 +522,27 @@ for (const protocol of ['http', 'https']) {
           const id = Number(req.url.slice(1))
           const plan = plans[id]
           res.on('error', () => {})
-          res.writeHead(200, { 'content-length': 1 + plan.chunks * plan.chunkSize })
-          res.write(Buffer.from([id]))
-          let sent = 0
-          const write = () => {
-            if (res.destroyed) return
-            if (sent++ < plan.chunks) {
-              res.write(Buffer.alloc(plan.chunkSize, id))
-              setImmediate(write)
-            } else res.end()
+          const respond = () => {
+            res.writeHead(200, { 'content-length': 1 + plan.chunks * plan.chunkSize })
+            res.write(Buffer.from([id]))
+            let sent = 0
+            const write = () => {
+              if (res.destroyed) return
+              if (sent++ < plan.chunks) {
+                res.write(Buffer.alloc(plan.chunkSize, id))
+                setImmediate(write)
+              } else res.end()
+            }
+            setImmediate(write)
           }
-          setImmediate(write)
+          if (plan.upload) {
+            let received = 0
+            req.on('data', chunk => { received += chunk.length })
+            req.on('end', () => {
+              assert.equal(received, UPLOAD.length)
+              respond()
+            })
+          } else respond()
         })
         server.listen(0, '127.0.0.1')
         await once(server, 'listening')
@@ -531,7 +553,9 @@ for (const protocol of ['http', 'https']) {
         const pending = plans.map(async (plan, id) => {
           const { body } = await client.request({
             path: `/${id}`,
-            method: 'GET',
+            method: plan.upload ? 'PUT' : 'GET',
+            body: plan.upload ? UPLOAD : null,
+            idempotent: true,
             blocking: false,
             highWaterMark: 1,
             scheduler: plan.scheduled ? scheduler.request(id) : null,
