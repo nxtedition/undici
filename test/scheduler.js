@@ -262,6 +262,56 @@ for (const protocol of PROTOCOLS) {
     })
   }
 
+  for (const scheduled of [true, false]) {
+    test(`finalizes an iterable body waiting ${scheduled ? 'for a slot' : 'to drain'} when its socket closes (${protocol})`, async (t) => {
+      // The server never reads, so the socket never drains.
+      const client = await startServer(t, protocol, (req) => req.pause())
+      const scheduler = new TestScheduler()
+      scheduler.pause()
+
+      let waiting = false
+      let finalized = false
+      const body = (async function * () {
+        try {
+          while (true) {
+            if (waiting) {
+              // A producer with nothing more to send yet.
+              await new Promise(() => {})
+            }
+            yield CHUNK
+          }
+        } finally {
+          finalized = true
+        }
+      })()
+
+      const ac = new AbortController()
+      const promise = client.request({
+        path: '/',
+        method: 'PUT',
+        body,
+        scheduler: scheduled ? scheduler : null,
+        signal: ac.signal
+      })
+
+      if (scheduled) {
+        await waitFor(() => scheduler.queue.length > 0, 'a queued write')
+      } else {
+        // Wait for the socket to push back.
+        await sleep(500)
+      }
+      waiting = true
+
+      ac.abort()
+      await assert.rejects(promise, { name: 'AbortError' })
+      // Without pulling another chunk from the body.
+      await waitFor(() => finalized, 'the body to be finalized')
+
+      scheduler.resume()
+      assertSettled(scheduler)
+    })
+  }
+
   test(`schedules reads of a response body (${protocol})`, async (t) => {
     const { client } = await startDownloadServer(t, protocol)
     const scheduler = new TestScheduler()
