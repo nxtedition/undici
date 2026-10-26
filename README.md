@@ -52,3 +52,47 @@ with `RequestAbortedError`.
 
 If an incomplete upload must not succeed, destroy the stream with an error, or
 check `body.readableEnded` before sending it.
+
+## Scheduled socket I/O
+
+Servers that don't honor request priority, such as S3, serve every request
+alike. A request's `scheduler` option orders its socket I/O against other
+requests instead. It takes an `@nxtedition/scheduler` `Scheduler`, or
+anything with the same `acquire(fn, priority)` and `release()`. `priority` is
+passed to `acquire()`.
+
+```js
+const scheduler = new Scheduler({ concurrency: 8 })
+
+await client.request({ path, method: 'PUT', body, scheduler, priority: 'low' })
+```
+
+A request holds one of the scheduler's slots while it waits on the network:
+
+- **Writes.** Once the socket pushes back, a stream or iterable body pauses
+  until it is granted a slot, then holds it until the socket drains. Buffer
+  and string bodies are written at once and aren't scheduled.
+- **Reads.** Once the response body has read everything the socket received,
+  it waits for a slot before reading more, then holds it until more bytes
+  arrive. A body queued for a slot leaves its bytes unread, so the server's
+  TCP window closes and the bandwidth goes to the responses holding slots.
+  Waiting for the slot doesn't count toward `bodyTimeout`. A response whose
+  socket ends while it waits reads the rest of its body without the slot.
+  If a response starts during an upload, reads continue without a read slot
+  until the upload finishes, so the response cannot block its own upload
+  from getting a write slot.
+
+So the scheduler's concurrency bounds how many requests use the network at
+once, and priority decides which go first. A request queued for a slot stops
+sending or reading, so a server may time out a request that waits too long.
+Slots are released when a request finishes, fails or is aborted; one granted
+after that is released at once.
+A completed request's scheduler can be garbage collected while its connection
+stays alive.
+
+Run `npm run test:fuzzing:scheduler` for the HTTP/HTTPS lifecycle matrix and
+seeded contention and pipelining fuzz tests. They check progress, producer
+cleanup, byte integrity, per-request slot accounting, and a healthy follow-up
+using the same scheduler. They also run as part of the unit suite. Increase
+the sample count with `SCHEDULER_FUZZ_RUNS=1000`; replay a failing seed with
+`SCHEDULER_FUZZ_SEED=<seed>`.

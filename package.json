@@ -72,6 +72,7 @@
     "test": "npm run test:javascript && npm run test:types",
     "test:javascript": "npm run generate-pem && npm run test:unit && npm run test:node-test",
     "test:fuzzing": "node test/fuzzing/fuzzing.test.js",
+    "test:fuzzing:scheduler": "node --expose-gc --test test/scheduler-fuzz.js",
     "test:unit": "borp --expose-gc -p \"test/*.js\"",
     "test:node-test": "borp -p \"test/node-test/**/*.js\"",
     "test:types": "tsc -p test/types/tsconfig.json",
