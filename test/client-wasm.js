@@ -5,6 +5,12 @@ const { describe, test } = require('node:test')
 const { execFileSync } = require('node:child_process')
 const { join } = require('node:path')
 
+test('uses the generic parser on riscv64', () => {
+  execFileSync(process.execPath, [
+    join(__dirname, 'fixtures/llhttp-riscv64-selection.js')
+  ], { timeout: 5000 })
+})
+
   ;[
   ['generic', require('../lib/llhttp/llhttp-wasm.js')],
   ['simd', require('../lib/llhttp/llhttp_simd-wasm.js')]
