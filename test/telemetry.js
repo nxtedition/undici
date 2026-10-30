@@ -51,7 +51,7 @@ for (const Constructor of [Client, Pool, Agent]) {
     t.after(async () => { await client.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
     const request = (parent, telemetry) => hooks.storage.run(parent, () => client.request({
       origin, path: `/${parent}`, method: 'GET', ...(telemetry === undefined ? {} : { telemetry }),
-      headers: { TraceParent: 'stale', baggage: 'private=value', 'x-extra': 'kept', connection: undefined }
+      headers: { TraceParent: 'stale', baggage: 'private=value', 'x-extra': 'kept', connection: undefined, 'request-id': parent === 'second' ? [] : undefined }
     }))
     const responses = await Promise.all([request('first'), request('second')])
     assert.deepEqual(await Promise.all(responses.map(response => response.body.text())), ['/first', '/second'])
