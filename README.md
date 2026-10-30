@@ -54,7 +54,7 @@ The application supplies `telemetry` with this synchronous contract:
   caller's headers. A value of `undefined` removes a copied field. `requestId`
   supplies a `request-id` header only when no explicit header is present.
 - Optional context `start(request)` creates an attempt. Its closure retains the
-  captured parent; `request` supplies the logical origin, method, path and
+  captured parent and is called in its context; `request` supplies the logical origin, method, path and
   headers. Destination and baggage policy belong here. Return null/undefined
   for propagation without an attempt span.
 - An attempt supplies optional `headers`, `run(callback)` and
