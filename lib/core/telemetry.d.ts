@@ -5,3 +5,5 @@ export function getTelemetry (dispatcher: object): Telemetry | false | null | un
 export function prepareTelemetry<O extends object, H extends object> (opts: O, handler: H, telemetry?: Telemetry | false | null): { opts: O; handler: H }
 export function dispatchTelemetry<O extends object, H extends object, R> (dispatch: (opts: O, handler: H) => R, opts: O, handler: H): R
 export function hasTelemetryContext (opts: object): boolean
+
+export function getTelemetryFields (opts: object): ReadonlySet<string> | undefined

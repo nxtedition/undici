@@ -128,7 +128,8 @@ export interface Telemetry {
 export interface TelemetryContext {
   /** Run the callback exactly once, synchronously, returning its result. */
   run<T>(callback: () => T): T
-  /** Propagation fields; undefined removes a copied field. Names are case-insensitive.
+  /** Declare every propagation field an attempt may replace, including absent
+   * fields with undefined. Undefined removes a copied field. Names are case-insensitive.
    * request-id is reserved; use requestId for an inherited correlation id. */
   readonly headers?: Readonly<Record<string, string | undefined>>
   /** Inherited request id, used only when the request has no explicit id/header. */
@@ -147,6 +148,7 @@ export interface TelemetryRequest {
 
 export interface TelemetrySpan {
   /** Attempt propagation fields, injected after the client's proxy filtering.
+   * Every field must be declared in the captured context's headers map.
    * request-id is reserved and cannot replace the request's correlation id. */
   readonly headers?: Readonly<Record<string, string | undefined>>
   /** Optional attempt context. Without it, callbacks use the captured context. */

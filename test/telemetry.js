@@ -162,3 +162,18 @@ test('observer failures do not block completion; aborting a queued request ends 
   } })
   assert.equal(await response.body.text(), 'ok')
 })
+
+test('attempt fields must be declared before queues and cache lookup', async t => {
+  const client = new Client('http://localhost')
+  t.after(() => client.destroy())
+  const results = []
+  await assert.rejects(client.request({ path: '/', method: 'GET', telemetry: {
+    capture: () => ({
+      run: callback => callback(),
+      headers: { traceparent: undefined },
+      start: () => ({ headers: { baggage: 'undeclared' }, end: result => results.push(result) })
+    })
+  } }), /must be declared/)
+  assert.equal(results.length, 1)
+  assert.equal(results[0].type, 'error')
+})
