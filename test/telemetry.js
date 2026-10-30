@@ -18,13 +18,13 @@ function instrumentation () {
       if (!parent) return null
       return {
         run: callback => storage.run(parent, callback),
-        headers: { traceparent: parent, baggage: undefined },
+        headers: { traceparent: parent, baggage: undefined, 'Request-Id': 'wrong-parent-id' },
         requestId: parent,
         start (options) {
           const attempt = { parent, origin: options.origin, path: options.path, statuses: [], results: [] }
           attempts.push(attempt)
           return {
-            headers: { traceparent: `${parent}:${attempts.length}` },
+            headers: { traceparent: `${parent}:${attempts.length}`, 'request-id': 'wrong-attempt-id' },
             run: callback => storage.run(`${parent}:attempt`, callback),
             onHeaders: code => attempt.statuses.push(code),
             end: result => attempt.results.push(result)
@@ -51,14 +51,14 @@ for (const Constructor of [Client, Pool, Agent]) {
     t.after(async () => { await client.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
     const request = (parent, telemetry) => hooks.storage.run(parent, () => client.request({
       origin, path: `/${parent}`, method: 'GET', ...(telemetry === undefined ? {} : { telemetry }),
-      headers: { TraceParent: 'stale', baggage: 'private=value', 'x-extra': 'kept' }
+      headers: { TraceParent: 'stale', baggage: 'private=value', 'x-extra': 'kept', connection: undefined }
     }))
     const responses = await Promise.all([request('first'), request('second')])
     assert.deepEqual(await Promise.all(responses.map(response => response.body.text())), ['/first', '/second'])
     assert.deepEqual(hooks.captures, ['first', 'second'])
     assert.deepEqual(seen.map(headers => headers.traceparent), ['first:1', 'second:2'])
     assert.deepEqual(seen.map(headers => headers['request-id']), ['first', 'second'])
-    assert.ok(seen.every(headers => !headers.baggage && headers['x-extra'] === 'kept'))
+    assert.ok(seen.every(headers => !headers.baggage && headers['x-extra'] === 'kept' && headers.connection !== 'undefined'))
     assert.ok(hooks.attempts.every(attempt => String(attempt.origin) === origin && attempt.results.length === 1))
     assert.deepEqual(hooks.attempts.map(attempt => attempt.statuses), [[200], [200]])
     const disabled = await request('disabled', false)

@@ -52,7 +52,8 @@ The application supplies `telemetry` with this synchronous contract:
   run in this context. Handler receivers and backpressure returns are preserved.
 - Optional context `headers` replace propagation fields without mutating the
   caller's headers. A value of `undefined` removes a copied field. `requestId`
-  supplies a `request-id` header only when no explicit header is present.
+  supplies a `request-id` header only when no explicit header is present. The
+  `request-id` field is reserved and ignored in propagation header maps.
 - Optional context `start(request)` creates an attempt. Its closure retains the
   captured parent and is called in its context; `request` supplies the logical origin, method, path and
   headers. Destination and baggage policy belong here. Return null/undefined
