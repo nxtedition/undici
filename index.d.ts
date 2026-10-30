@@ -118,6 +118,48 @@ export type RequestCallback<TOpaque = null> = (
   data: Dispatcher.ResponseData<TOpaque> | RequestErrorData<TOpaque>
 ) => void
 
+/** Optional instrumentation, supplied by the application's tracing integration. */
+export interface Telemetry {
+  /** Capture once, synchronously, before a request can enter a shared queue.
+   * Return null/undefined to disable instrumentation for this request. */
+  capture(): TelemetryContext | null | undefined
+}
+
+export interface TelemetryContext {
+  /** Run the callback exactly once, synchronously, returning its result. */
+  run<T>(callback: () => T): T
+  /** Propagation fields; undefined removes a copied field. Names are case-insensitive. */
+  readonly headers?: Readonly<Record<string, string | undefined>>
+  /** Inherited request id, used only when the request has no explicit id/header. */
+  readonly requestId?: string
+  /** Called for each dispatched attempt. A closure retains the captured parent.
+   * Apply destination/baggage policy here, including redirect destinations. */
+  start?(request: TelemetryRequest): TelemetrySpan | null | undefined
+}
+
+export interface TelemetryRequest {
+  readonly origin?: string | URL
+  readonly path: string
+  readonly method: string
+  readonly headers?: HeadersInit
+}
+
+export interface TelemetrySpan {
+  /** Attempt propagation fields, injected after the client's proxy filtering. */
+  readonly headers?: Readonly<Record<string, string | undefined>>
+  /** Optional attempt context. Without it, callbacks use the captured context. */
+  run?<T>(callback: () => T): T
+  /** Includes informational responses; an integration chooses which to record. */
+  onHeaders?(statusCode: number): void
+  /** Called once on completion, failure or upgrade, before terminal delivery.
+   * onHeaders/end observer exceptions are ignored so cleanup still runs. */
+  end(result: TelemetryResult): void
+}
+
+export type TelemetryResult =
+  | { readonly type: 'complete' | 'upgrade' }
+  | { readonly type: 'error'; readonly error: unknown; readonly aborted: boolean }
+
 /** The core dispatcher API implemented by Client, Pool, Agent, and custom dispatchers. */
 export class Dispatcher extends EventEmitter<Dispatcher.EventMap> {
   dispatch (options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean
@@ -148,6 +190,8 @@ export namespace Dispatcher {
   }
 
   interface DispatchOptions {
+    /** null/undefined inherit the dispatcher option; false disables it. */
+    telemetry?: Telemetry | false | null
     origin?: string | URL
     path: string
     method: string
@@ -242,6 +286,8 @@ export class Client extends Dispatcher {
 
 export namespace Client {
   interface Options {
+    /** Optional request tracing hooks. No SDK or async context is installed by the client. */
+    telemetry?: Telemetry | false | null
     /**
      * The limit, in bytes, for a response's header section, counted like
      * node:http: the reason phrase, field names and field values count; the

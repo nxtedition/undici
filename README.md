@@ -24,14 +24,53 @@ response.
 
 ## Async context
 
-Async context propagation is not supported. This package deliberately does not
-use `node:async_hooks`, create `AsyncResource` instances, or preserve
-`AsyncLocalStorage` stores across internal queueing, dispatch, and callback
-boundaries.
+Async context is opt-in through a `{ telemetry }` hooks object on Client, Pool,
+Agent or an individual request. `null`/`undefined` inherit the dispatcher's hooks;
+`false` disables them for that request. The client installs no context manager,
+SDK, exporter, `AsyncResource`, or async hooks. Without telemetry, transport
+callbacks have no request-context guarantee.
 
-Do not rely on transport callbacks running in the context that submitted a
-request. Applications that need request-scoped state must carry it explicitly
-outside the transport.
+```js
+const client = new Client(origin, { telemetry })
+try {
+  const response = await client.request({ path: '/', method: 'GET' })
+  await response.body.dump()
+  // A request can override the constructor's integration.
+  const untraced = await client.request({ path: '/', method: 'GET', telemetry: false })
+  await untraced.body.dump()
+} finally {
+  await client.close()
+}
+```
+
+The application supplies `telemetry` with this synchronous contract:
+
+- `capture()` returns a captured context or `null`/`undefined` to bypass tracing.
+  Capture happens once, before shared Agent/Pool/Client queues can change context.
+- The context's `run(callback)` calls the callback exactly once and returns its
+  result. Public handler callbacks, their abort functions and resume callbacks
+  run in this context. Handler receivers and backpressure returns are preserved.
+- Optional context `headers` replace propagation fields without mutating the
+  caller's headers. A value of `undefined` removes a copied field. `requestId`
+  supplies a `request-id` header only when no explicit header is present.
+- Optional context `start(request)` creates an attempt. Its closure retains the
+  captured parent; `request` supplies the logical origin, method, path and
+  headers. Destination and baggage policy belong here. Return null/undefined
+  for propagation without an attempt span.
+- An attempt supplies optional `headers`, `run(callback)` and
+  `onHeaders(statusCode)`, plus `end(result)`. End runs once with
+  `{ type: 'complete' }`, `{ type: 'upgrade' }` or
+  `{ type: 'error', error, aborted }`. Spans cover dispatch/queueing through full
+  response completion, failure or upgrade; consume or destroy response bodies
+  normally. `onHeaders` includes informational responses.
+
+The exported TypeScript interfaces are `Telemetry`, `TelemetryContext`,
+`TelemetryRequest`, `TelemetrySpan` and `TelemetryResult`. There is no telemetry
+runtime export or interceptor to install. Hooks must be synchronous;
+`capture`, `start` and `run` failures follow normal request error handling.
+Observer exceptions from `onHeaders`/`end` are ignored so transport cleanup and
+terminal callback delivery still complete. Tracing integrations choose sampling,
+suppression, parentless behavior and any OpenTelemetry SDK configuration.
 
 ## Closed stream bodies
 
