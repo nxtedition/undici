@@ -318,3 +318,31 @@ undiciRequire.headerNameToString(headerNameBuffer, 0, headerNameBuffer.length) s
 headerNameToString('Content-Type', 0, 12)
 // @ts-expect-error offset and length are required
 headerNameToString(headerNameBuffer)
+
+// Telemetry is a structural option, with no runtime telemetry export.
+const telemetryHooks: import('../../index.js').Telemetry = {
+  capture() {
+    return {
+      run: callback => callback(),
+      headers: { traceparent: 'parent', baggage: undefined },
+      start(request) {
+        request.path satisfies string
+        return { end(result) { result.statusCode satisfies number | undefined; if (result.type === 'error') result.error satisfies unknown } }
+      }
+    }
+  }
+}
+// @ts-expect-error Telemetry belongs to each request, not the client constructor.
+new Client('http://localhost', { telemetry: telemetryHooks })
+// @ts-expect-error Telemetry belongs to each request, not the pool constructor.
+new Pool('http://localhost', { telemetry: telemetryHooks })
+// @ts-expect-error Telemetry belongs to each request, not the agent constructor.
+new Agent({ telemetry: telemetryHooks })
+const tracedRequest: Dispatcher.RequestOptions = { path: '/', method: 'GET', telemetry: telemetryHooks }
+const tracedDispatch: Dispatcher.DispatchOptions = tracedRequest
+void tracedDispatch
+const telemetryRequest: Dispatcher.RequestOptions = { path: '/', method: 'GET', telemetry: false }
+void telemetryRequest
+// @ts-expect-error Telemetry is a hooks object or false, not a boolean enable switch.
+const invalidTelemetryRequest: Dispatcher.RequestOptions = { path: '/', method: 'GET', telemetry: true }
+void invalidTelemetryRequest
