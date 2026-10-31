@@ -21,12 +21,11 @@ function instrumentation () {
         headers: { traceparent: parent, baggage: undefined, 'Request-Id': 'wrong-parent-id' },
         requestId: parent,
         start (options) {
-          const attempt = { parent, origin: options.origin, path: options.path, statuses: [], results: [] }
+          const attempt = { parent, origin: options.origin, path: options.path, results: [] }
           attempts.push(attempt)
           return {
             headers: { traceparent: `${parent}:${attempts.length}`, 'request-id': 'wrong-attempt-id' },
             run: callback => storage.run(`${parent}:attempt`, callback),
-            onHeaders: code => attempt.statuses.push(code),
             end: result => attempt.results.push(result)
           }
         }
@@ -37,39 +36,44 @@ function instrumentation () {
 }
 
 for (const Constructor of [Client, Pool, Agent]) {
-  test(`${Constructor.name}: constructor defaults, overrides and capture before shared queues`, async t => {
+  test(`${Constructor.name}: request hooks capture before shared queues without becoming defaults`, async t => {
     const seen = []
     const server = createServer((req, res) => {
       seen.push(req.headers)
+      res.writeEarlyHints({ link: '</style.css>; rel=preload' })
       setTimeout(() => res.end(req.url), 5)
     }).listen(0, '127.0.0.1')
     await once(server, 'listening')
     const origin = `http://127.0.0.1:${server.address().port}`
     const hooks = instrumentation()
-    const options = { telemetry: hooks.telemetry, connections: 1, pipelining: 1 }
+    const options = { connections: 1, pipelining: 1 }
     const client = Constructor === Agent ? new Agent(options) : new Constructor(origin, options)
     t.after(async () => { await client.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
     const request = (parent, telemetry) => hooks.storage.run(parent, () => client.request({
       origin, path: `/${parent}`, method: 'GET', ...(telemetry === undefined ? {} : { telemetry }),
       headers: { TraceParent: 'stale', baggage: 'private=value', 'x-extra': 'kept', connection: undefined, 'request-id': parent === 'second' ? [] : undefined }
     }))
-    const responses = await Promise.all([request('first'), request('second')])
+    const responses = await Promise.all([request('first', hooks.telemetry), request('second', hooks.telemetry)])
     assert.deepEqual(await Promise.all(responses.map(response => response.body.text())), ['/first', '/second'])
     assert.deepEqual(hooks.captures, ['first', 'second'])
     assert.deepEqual(seen.map(headers => headers.traceparent), ['first:1', 'second:2'])
     assert.deepEqual(seen.map(headers => headers['request-id']), ['first', 'second'])
     assert.ok(seen.every(headers => !headers.baggage && headers['x-extra'] === 'kept' && headers.connection !== 'undefined'))
     assert.ok(hooks.attempts.every(attempt => String(attempt.origin) === origin && attempt.results.length === 1))
-    assert.deepEqual(hooks.attempts.map(attempt => attempt.statuses), [[200], [200]])
+    assert.deepEqual(hooks.attempts.map(attempt => attempt.results), [[{ type: 'complete', statusCode: 200 }], [{ type: 'complete', statusCode: 200 }]])
     const disabled = await request('disabled', false)
     await disabled.body.dump()
     assert.equal(seen[2].traceparent, 'stale')
+    assert.equal(hooks.captures.length, 2)
+    const untraced = await request('untraced')
+    await untraced.body.dump()
+    assert.equal(seen[3].traceparent, 'stale')
     assert.equal(hooks.captures.length, 2)
     const override = instrumentation()
     const explicit = await override.storage.run('override', () => request('unused', override.telemetry))
     await explicit.body.dump()
     assert.deepEqual(override.captures, ['override'])
-    assert.equal(seen[3].traceparent, 'override:1')
+    assert.equal(seen[4].traceparent, 'override:1')
   })
 }
 
@@ -77,10 +81,10 @@ test('callbacks, backpressure and resume/abort retain the submitted context', as
   const hooks = instrumentation()
   const server = createServer((_req, res) => res.end('body')).listen(0, '127.0.0.1')
   await once(server, 'listening')
-  const client = new Client(`http://127.0.0.1:${server.address().port}`, { telemetry: hooks.telemetry })
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
   t.after(async () => { await client.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
   const contexts = []
-  await new Promise((resolve, reject) => hooks.storage.run('caller', () => client.dispatch({ path: '/', method: 'GET' }, {
+  await new Promise((resolve, reject) => hooks.storage.run('caller', () => client.dispatch({ path: '/', method: 'GET', telemetry: hooks.telemetry }, {
     onConnect () { contexts.push(hooks.storage.getStore()) },
     onHeaders (_status, _headers, resume) {
       contexts.push(hooks.storage.getStore())
@@ -92,9 +96,9 @@ test('callbacks, backpressure and resume/abort retain the submitted context', as
     onError: reject
   })))
   assert.deepEqual(contexts, ['caller', 'caller', 'caller', 'caller'])
-  assert.deepEqual(hooks.attempts[0].results, [{ type: 'complete' }])
+  assert.deepEqual(hooks.attempts[0].results, [{ type: 'complete', statusCode: 200 }])
   const reason = new Error('cancelled')
-  await new Promise(resolve => hooks.storage.run('abort', () => client.dispatch({ path: '/', method: 'GET' }, {
+  await new Promise(resolve => hooks.storage.run('abort', () => client.dispatch({ path: '/', method: 'GET', telemetry: hooks.telemetry }, {
     onConnect (abort) { hooks.storage.run('other', () => abort(reason)) },
     onHeaders () {}, onData () {}, onComplete () {},
     onError (error) { assert.equal(error, reason); assert.equal(hooks.storage.getStore(), 'abort'); resolve() }
@@ -103,15 +107,14 @@ test('callbacks, backpressure and resume/abort retain the submitted context', as
 })
 
 test('invalid hooks and request options fail normally; parentless capture bypasses spans', async t => {
-  assert.throws(() => new Client('http://localhost', { telemetry: true }), /capture/)
   const hooks = instrumentation()
-  const client = new Client('http://localhost', { telemetry: hooks.telemetry })
+  const client = new Client('http://localhost')
   t.after(() => client.destroy())
   await assert.rejects(client.request({ path: '/', method: 'GET', telemetry: true }), /capture/)
-  await assert.rejects(hooks.storage.run('parent', () => client.request({ path: 'invalid', method: 'GET' })), /path/)
+  await assert.rejects(hooks.storage.run('parent', () => client.request({ path: 'invalid', method: 'GET', telemetry: hooks.telemetry })), /path/)
   assert.equal(hooks.attempts[0].results[0].type, 'error')
   assert.equal(hooks.attempts[0].results.length, 1)
-  await assert.rejects(client.request({ path: 'invalid', method: 'GET' }), /path/)
+  await assert.rejects(client.request({ path: 'invalid', method: 'GET', telemetry: hooks.telemetry }), /path/)
   assert.equal(hooks.attempts.length, 1)
 })
 
@@ -136,7 +139,7 @@ test('upgrades finish the attempt and retain the original handler receiver', asy
     }
     hooks.storage.run('parent', () => client.dispatch({ path: '/', method: 'GET', upgrade: 'test', telemetry: hooks.telemetry }, new Handler()))
   })
-  assert.deepEqual(hooks.attempts[0].results, [{ type: 'upgrade' }])
+  assert.deepEqual(hooks.attempts[0].results, [{ type: 'upgrade', statusCode: 101 }])
 })
 
 test('observer failures do not block completion; aborting a queued request ends its span', async t => {
@@ -156,7 +159,6 @@ test('observer failures do not block completion; aborting a queued request ends 
   assert.equal(hooks.attempts[1].results[0].type, 'error')
   const response = await client.request({ path: '/', method: 'GET', telemetry: {
     capture: () => ({ run: callback => callback(), start: () => ({
-      onHeaders () { throw new Error('observer') },
       end () { throw new Error('observer') }
     }) })
   } })
@@ -176,4 +178,28 @@ test('attempt fields must be declared before queues and cache lookup', async t =
   } }), /must be declared/)
   assert.equal(results.length, 1)
   assert.equal(results[0].type, 'error')
+})
+
+test('end retains the final status when the response body is aborted', async t => {
+  const hooks = instrumentation()
+  const server = createServer((_req, res) => {
+    res.writeEarlyHints({ link: '</style.css>; rel=preload' })
+    res.writeHead(206)
+    res.write('partial')
+  }).listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
+  t.after(async () => { await client.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
+  const reason = new Error('stop after headers')
+  let cancel
+  await new Promise((resolve, reject) => hooks.storage.run('caller', () => client.dispatch({
+    path: '/', method: 'GET', telemetry: hooks.telemetry
+  }, {
+    onConnect (abort) { cancel = abort },
+    onHeaders () { return true },
+    onData () { cancel(reason) },
+    onComplete () { reject(new Error('unexpected completion')) },
+    onError (error) { assert.equal(error, reason); resolve() }
+  })))
+  assert.deepEqual(hooks.attempts[0].results, [{ type: 'error', error: reason, aborted: true, statusCode: 206 }])
 })

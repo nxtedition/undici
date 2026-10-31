@@ -24,19 +24,18 @@ response.
 
 ## Async context
 
-Async context is opt-in through a `{ telemetry }` hooks object on Client, Pool,
-Agent or an individual request. `null`/`undefined` inherit the dispatcher's hooks;
-`false` disables them for that request. The client installs no context manager,
+Async context is opt-in through a `{ telemetry }` hooks object on each
+`request()` or `dispatch()` call. Omit it, or pass `null`/`false`, to leave the
+request uninstrumented. The client installs no context manager,
 SDK, exporter, `AsyncResource`, or async hooks. Without telemetry, transport
 callbacks have no request-context guarantee.
 
 ```js
-const client = new Client(origin, { telemetry })
+const client = new Client(origin)
 try {
-  const response = await client.request({ path: '/', method: 'GET' })
+  const response = await client.request({ path: '/', method: 'GET', telemetry })
   await response.body.dump()
-  // A request can override the constructor's integration.
-  const untraced = await client.request({ path: '/', method: 'GET', telemetry: false })
+  const untraced = await client.request({ path: '/', method: 'GET' })
   await untraced.body.dump()
 } finally {
   await client.close()
@@ -60,18 +59,19 @@ The application supplies `telemetry` with this synchronous contract:
   captured parent and is called in its context; `request` supplies the logical origin, method, path and
   headers. Destination and baggage policy belong here. Return null/undefined
   for propagation without an attempt span.
-- An attempt supplies optional `headers`, `run(callback)` and
-  `onHeaders(statusCode)`, plus `end(result)`. End runs once with
+- An attempt supplies optional `headers` and `run(callback)`, plus
+  `end(result)`. End runs once with
   `{ type: 'complete' }`, `{ type: 'upgrade' }` or
   `{ type: 'error', error, aborted }`. Spans cover dispatch/queueing through full
   response completion, failure or upgrade; consume or destroy response bodies
-  normally. `onHeaders` includes informational responses.
+  normally. Results include `statusCode` when a final response or upgrade was
+  received; informational responses do not supply the final status.
 
 The exported TypeScript interfaces are `Telemetry`, `TelemetryContext`,
 `TelemetryRequest`, `TelemetrySpan` and `TelemetryResult`. There is no telemetry
 runtime export or interceptor to install. Hooks must be synchronous;
 `capture`, `start` and `run` failures follow normal request error handling.
-Observer exceptions from `onHeaders`/`end` are ignored so transport cleanup and
+Observer exceptions from `end` are ignored so transport cleanup and
 terminal callback delivery still complete. Tracing integrations choose sampling,
 suppression, parentless behavior and any OpenTelemetry SDK configuration.
 

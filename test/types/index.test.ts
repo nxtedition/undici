@@ -327,15 +327,22 @@ const telemetryHooks: import('../../index.js').Telemetry = {
       headers: { traceparent: 'parent', baggage: undefined },
       start(request) {
         request.path satisfies string
-        return { end(result) { if (result.type === 'error') result.error satisfies unknown } }
+        return { end(result) { result.statusCode satisfies number | undefined; if (result.type === 'error') result.error satisfies unknown } }
       }
     }
   }
 }
+// @ts-expect-error Telemetry belongs to each request, not the client constructor.
 new Client('http://localhost', { telemetry: telemetryHooks })
+// @ts-expect-error Telemetry belongs to each request, not the pool constructor.
 new Pool('http://localhost', { telemetry: telemetryHooks })
+// @ts-expect-error Telemetry belongs to each request, not the agent constructor.
 new Agent({ telemetry: telemetryHooks })
+const tracedRequest: Dispatcher.RequestOptions = { path: '/', method: 'GET', telemetry: telemetryHooks }
+const tracedDispatch: Dispatcher.DispatchOptions = tracedRequest
+void tracedDispatch
 const telemetryRequest: Dispatcher.RequestOptions = { path: '/', method: 'GET', telemetry: false }
 void telemetryRequest
 // @ts-expect-error Telemetry is a hooks object or false, not a boolean enable switch.
-new Client('http://localhost', { telemetry: true })
+const invalidTelemetryRequest: Dispatcher.RequestOptions = { path: '/', method: 'GET', telemetry: true }
+void invalidTelemetryRequest

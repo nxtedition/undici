@@ -153,16 +153,15 @@ export interface TelemetrySpan {
   readonly headers?: Readonly<Record<string, string | undefined>>
   /** Optional attempt context. Without it, callbacks use the captured context. */
   run?<T>(callback: () => T): T
-  /** Includes informational responses; an integration chooses which to record. */
-  onHeaders?(statusCode: number): void
   /** Called once on completion, failure or upgrade, before terminal delivery.
-   * onHeaders/end observer exceptions are ignored so cleanup still runs. */
+   * End observer exceptions are ignored so cleanup still runs. */
   end(result: TelemetryResult): void
 }
 
+/** statusCode is the final response or upgrade status, omitted if none was received. */
 export type TelemetryResult =
-  | { readonly type: 'complete' | 'upgrade' }
-  | { readonly type: 'error'; readonly error: unknown; readonly aborted: boolean }
+  | { readonly type: 'complete' | 'upgrade'; readonly statusCode?: number }
+  | { readonly type: 'error'; readonly error: unknown; readonly aborted: boolean; readonly statusCode?: number }
 
 /** The core dispatcher API implemented by Client, Pool, Agent, and custom dispatchers. */
 export class Dispatcher extends EventEmitter<Dispatcher.EventMap> {
@@ -194,7 +193,7 @@ export namespace Dispatcher {
   }
 
   interface DispatchOptions {
-    /** null/undefined inherit the dispatcher option; false disables it. */
+    /** Optional tracing hooks for this request; null/undefined/false disable instrumentation. */
     telemetry?: Telemetry | false | null
     origin?: string | URL
     path: string
@@ -290,8 +289,6 @@ export class Client extends Dispatcher {
 
 export namespace Client {
   interface Options {
-    /** Optional request tracing hooks. No SDK or async context is installed by the client. */
-    telemetry?: Telemetry | false | null
     /**
      * The limit, in bytes, for a response's header section, counted like
      * node:http: the reason phrase, field names and field values count; the
