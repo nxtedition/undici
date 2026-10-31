@@ -12,11 +12,11 @@ treats their `Content-Length`. The table describes responses to non-HEAD
 requests without `Transfer-Encoding`, when connection reuse is otherwise
 allowed:
 
-| response | this client | upstream undici |
-|---|---|---|
-| 304 with a non-zero `Content-Length` | succeeds and keeps the connection; the length describes the selected representation (RFC 9110 §8.6) | succeeds and closes the connection |
-| bytes after a 304 with a non-zero `Content-Length` | parsed as the next pipelined response | discarded with the connection; pipelined requests are resent |
-| 204 with a non-zero `Content-Length` | fails with `ResponseContentLengthMismatchError` (RFC 9110 §8.6 forbids it) | succeeds and closes the connection |
+| response                                           | this client                                                                                         | upstream undici                                              |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| 304 with a non-zero `Content-Length`               | succeeds and keeps the connection; the length describes the selected representation (RFC 9110 §8.6) | succeeds and closes the connection                           |
+| bytes after a 304 with a non-zero `Content-Length` | parsed as the next pipelined response                                                               | discarded with the connection; pipelined requests are resent |
+| 204 with a non-zero `Content-Length`               | fails with `ResponseContentLengthMismatchError` (RFC 9110 §8.6 forbids it)                          | succeeds and closes the connection                           |
 
 A 204 or 304 to a non-HEAD request that also carries `Transfer-Encoding`
 closes the connection, so bytes after it can't be taken for a pipelined
@@ -31,14 +31,18 @@ SDK, exporter, `AsyncResource`, or async hooks. Without telemetry, transport
 callbacks have no request-context guarantee.
 
 ```js
-const client = new Client(origin)
+const client = new Client(origin);
 try {
-  const response = await client.request({ path: '/', method: 'GET', telemetry })
-  await response.body.dump()
-  const untraced = await client.request({ path: '/', method: 'GET' })
-  await untraced.body.dump()
+  const response = await client.request({
+    path: "/",
+    method: "GET",
+    telemetry,
+  });
+  await response.body.dump();
+  const untraced = await client.request({ path: "/", method: "GET" });
+  await untraced.body.dump();
 } finally {
-  await client.close()
+  await client.close();
 }
 ```
 
@@ -75,6 +79,19 @@ Observer exceptions from `end` are ignored so transport cleanup and
 terminal callback delivery still complete. Tracing integrations choose sampling,
 suppression, parentless behavior and any OpenTelemetry SDK configuration.
 
+Compare telemetry overhead across checkouts with the same workload:
+
+```sh
+BENCH_IMPLS=before=/path/to/before,after=/path/to/after BENCH_PROFILES=1 node bench/telemetry.mjs
+```
+
+The driver uses a separate HTTP server, 1 KiB responses, eight connections and
+16 concurrent requests. Five rounds reverse the implementation order, with
+10,000 warmup requests and 30,000 measured requests per sample. JSON output
+includes throughput, latency, client CPU and GC time. Separate profiling runs
+include CPU and sampled allocation profiles, including collected objects. The
+enabled case uses lightweight AsyncLocalStorage hooks without an SDK or exporter.
+
 ## Closed stream bodies
 
 A stream passed as a request `body` may already be closed when the request is
@@ -104,9 +121,9 @@ anything with the same `acquire(fn, priority)` and `release()`. `priority` is
 passed to `acquire()`.
 
 ```js
-const scheduler = new Scheduler({ concurrency: 8 })
+const scheduler = new Scheduler({ concurrency: 8 });
 
-await client.request({ path, method: 'PUT', body, scheduler, priority: 'low' })
+await client.request({ path, method: "PUT", body, scheduler, priority: "low" });
 ```
 
 A request holds one of the scheduler's slots while it waits on the network:
