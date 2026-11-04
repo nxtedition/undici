@@ -460,6 +460,37 @@ for (const protocol of PROTOCOLS) {
     assertSettled(scheduler)
   })
 
+  // A queued read leaves a plain socket's bytes on its Readable side, where a
+  // read error would drop them. A SocketReader drains on any read error, and
+  // a TLS socket cannot be reset from the server.
+  if (protocol === 'http') {
+    test(`reads a response body whose socket is reset while queued for a slot (${protocol})`, async (t) => {
+      // Within the socket's highWaterMark, so the rest is buffered when the
+      // reset arrives instead of left in the kernel.
+      const part = Buffer.alloc(16 * 1024, 'a')
+      const scheduler = new TestScheduler()
+      const client = await startServer(t, protocol, async (req, res) => {
+        res.writeHead(200, { 'content-length': 2 * part.length })
+        res.write(part)
+        await waitFor(() => scheduler.queue.length > 0, 'a queued read')
+        res.write(part)
+        await sleep(100)
+        req.socket.resetAndDestroy()
+      })
+      scheduler.pause()
+
+      const disconnected = once(client, 'disconnect')
+      const res = await client.request({ path: '/', method: 'GET', scheduler })
+
+      // The whole body arrived before the reset.
+      assert.strictEqual(await readAll(res.body), 2 * part.length)
+
+      await disconnected
+      scheduler.resume()
+      assertSettled(scheduler)
+    })
+  }
+
   // A Readable side ends only once its bytes are read, but a SocketReader can
   // still hold bytes when the socket ends.
   if (protocol === 'https') {
