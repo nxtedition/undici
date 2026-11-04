@@ -118,6 +118,51 @@ export type RequestCallback<TOpaque = null> = (
   data: Dispatcher.ResponseData<TOpaque> | RequestErrorData<TOpaque>
 ) => void
 
+/** Optional instrumentation, supplied by the application's tracing integration. */
+export interface Telemetry {
+  /** Capture once, synchronously, before a request can enter a shared queue.
+   * Return null/undefined to disable instrumentation for this request. */
+  capture(): TelemetryContext | null | undefined
+}
+
+export interface TelemetryContext {
+  /** Run the callback exactly once, synchronously, returning its result. */
+  run<T>(callback: () => T): T
+  /** Declare every propagation field an attempt may replace, including absent
+   * fields with undefined. Undefined removes a copied field. Names are case-insensitive.
+   * request-id is reserved; use requestId for an inherited correlation id. */
+  readonly headers?: Readonly<Record<string, string | undefined>>
+  /** Inherited request id, used only when the request has no explicit id/header. */
+  readonly requestId?: string
+  /** Called for each dispatched attempt. A closure retains the captured parent.
+   * Apply destination/baggage policy here, including redirect destinations. */
+  start?(request: TelemetryRequest): TelemetrySpan | null | undefined
+}
+
+export interface TelemetryRequest {
+  readonly origin?: string | URL
+  readonly path: string
+  readonly method: string
+  readonly headers?: HeadersInit
+}
+
+export interface TelemetrySpan {
+  /** Attempt propagation fields, injected after the client's proxy filtering.
+   * Every field must be declared in the captured context's headers map.
+   * request-id is reserved and cannot replace the request's correlation id. */
+  readonly headers?: Readonly<Record<string, string | undefined>>
+  /** Optional attempt context. Without it, callbacks use the captured context. */
+  run?<T>(callback: () => T): T
+  /** Called once on completion, failure or upgrade, before terminal delivery.
+   * End observer exceptions are ignored so cleanup still runs. */
+  end(result: TelemetryResult): void
+}
+
+/** statusCode is the final response or upgrade status, omitted if none was received. */
+export type TelemetryResult =
+  | { readonly type: 'complete' | 'upgrade'; readonly statusCode?: number }
+  | { readonly type: 'error'; readonly error: unknown; readonly aborted: boolean; readonly statusCode?: number }
+
 /** The core dispatcher API implemented by Client, Pool, Agent, and custom dispatchers. */
 export class Dispatcher extends EventEmitter<Dispatcher.EventMap> {
   dispatch (options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean
@@ -148,6 +193,8 @@ export namespace Dispatcher {
   }
 
   interface DispatchOptions {
+    /** Optional tracing hooks for this request; null/undefined/false disable instrumentation. */
+    telemetry?: Telemetry | false | null
     origin?: string | URL
     path: string
     method: string
