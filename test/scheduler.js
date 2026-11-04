@@ -9,6 +9,7 @@ const { Readable } = require('node:stream')
 const { setTimeout: sleep } = require('node:timers/promises')
 const pem = require('@metcoder95/https-pem')
 const { Client, errors } = require('..')
+const { kSocket } = require('../lib/core/symbols')
 
 // Plain sockets are read through their Readable side, TLS sockets through a
 // SocketReader.
@@ -464,31 +465,38 @@ for (const protocol of PROTOCOLS) {
   // read error would drop them. A SocketReader drains on any read error, and
   // a TLS socket cannot be reset from the server.
   if (protocol === 'http') {
-    test(`reads a response body whose socket is reset while queued for a slot (${protocol})`, async (t) => {
-      // Within the socket's highWaterMark, so the rest is buffered when the
-      // reset arrives instead of left in the kernel.
-      const part = Buffer.alloc(16 * 1024, 'a')
-      const scheduler = new TestScheduler()
-      const client = await startServer(t, protocol, async (req, res) => {
-        res.writeHead(200, { 'content-length': 2 * part.length })
-        res.write(part)
-        await waitFor(() => scheduler.queue.length > 0, 'a queued read')
-        res.write(part)
-        await sleep(100)
-        req.socket.resetAndDestroy()
+    for (const complete of [true, false]) {
+      test(`${complete ? 'reads a response' : 'rejects an incomplete response'} body whose socket is reset while queued for a slot (${protocol})`, { timeout: 15000 }, async (t) => {
+        // Within the socket's highWaterMark, so the rest is buffered when the
+        // reset arrives instead of left in the kernel.
+        const part = Buffer.alloc(16 * 1024, 'a')
+        const scheduler = new TestScheduler()
+        const client = await startServer(t, protocol, async (req, res) => {
+          res.writeHead(200, { 'content-length': (complete ? 2 : 3) * part.length })
+          res.write(part)
+          await waitFor(() => scheduler.queue.length > 0, 'a queued read')
+          await new Promise((resolve, reject) => {
+            res.write(part, (err) => err ? reject(err) : resolve())
+          })
+          await waitFor(() => client[kSocket].readableLength >= part.length, 'the remaining bytes to reach the client')
+          req.socket.resetAndDestroy()
+        })
+        scheduler.pause()
+
+        const disconnected = once(client, 'disconnect')
+        const res = await client.request({ path: '/', method: 'GET', scheduler })
+
+        if (complete) {
+          assert.strictEqual(await res.body.text(), 'a'.repeat(2 * part.length))
+        } else {
+          await assert.rejects(res.body.text(), { code: 'ECONNRESET' })
+        }
+
+        await disconnected
+        scheduler.resume()
+        assertSettled(scheduler)
       })
-      scheduler.pause()
-
-      const disconnected = once(client, 'disconnect')
-      const res = await client.request({ path: '/', method: 'GET', scheduler })
-
-      // The whole body arrived before the reset.
-      assert.strictEqual(await readAll(res.body), 2 * part.length)
-
-      await disconnected
-      scheduler.resume()
-      assertSettled(scheduler)
-    })
+    }
   }
 
   // A Readable side ends only once its bytes are read, but a SocketReader can

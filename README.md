@@ -80,8 +80,9 @@ A request holds one of the scheduler's slots while it waits on the network:
   TCP window closes and the bandwidth goes to the responses holding slots.
   Waiting for the slot doesn't count toward `bodyTimeout`. A response whose
   TLS socket ends while it waits reads the rest of its body without the slot;
-  over plain HTTP the rest waits for the slot. A socket error while it waits
-  doesn't lose the bytes that arrived before it.
+  over plain HTTP the rest waits for the slot. A socket read error while it
+  waits still parses the bytes that arrived before it; an incomplete body
+  still fails.
   If a response starts during an upload, reads continue without a read slot
   until the upload finishes, so the response cannot block its own upload
   from getting a write slot.
