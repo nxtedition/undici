@@ -18,4 +18,7 @@ test/request-timeout.10mb.bin
 .codex
 .cursor
 .aider*
+.gemini
+.specstory
+CLAUDE.local.md
 .*-private
