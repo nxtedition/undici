@@ -2,8 +2,19 @@
 
 const { tspl } = require('@matteo.collina/tspl')
 const { describe, test } = require('node:test')
-const { execFileSync } = require('node:child_process')
+const { execFileSync, spawnSync } = require('node:child_process')
 const { join } = require('node:path')
+
+test('rejects unsupported riscv64 runtimes', (t) => {
+  t = tspl(t, { plan: 2 })
+
+  const result = spawnSync(process.execPath, [
+    join(__dirname, 'fixtures/llhttp-riscv64-unsupported.js')
+  ], { encoding: 'utf8', timeout: 5000 })
+
+  t.strictEqual(result.status, 1)
+  t.match(result.stderr, /AssertionError \[ERR_ASSERTION\]: riscv64 is not supported/)
+})
 
   ;[
   ['generic', require('../lib/llhttp/llhttp-wasm.js')],
