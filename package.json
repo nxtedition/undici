@@ -1,6 +1,6 @@
 {
   "name": "@nxtedition/undici",
-  "version": "13.1.2",
+  "version": "13.2.0",
   "publishConfig": {
     "access": "restricted"
   },
