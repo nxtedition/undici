@@ -92,6 +92,44 @@ includes throughput, latency, client CPU and GC time. Separate profiling runs
 include CPU and sampled allocation profiles, including collected objects. The
 enabled case uses lightweight AsyncLocalStorage hooks without an SDK or exporter.
 
+## Request body hooks
+
+A `dispatch()` handler can observe the request being written with three
+optional methods:
+
+- `onRequestBegin()` runs once, before the request head is written. A stream
+  or iterable body is read before its head goes out, so this runs when its
+  first non-empty chunk arrives, or when it ends empty.
+- `onRequestData(chunk)` runs for each non-empty body chunk, before it is
+  written. `chunk` is what the body produced: a `Uint8Array` (usually a
+  `Buffer`) or, from a stream with an encoding or an iterable yielding
+  strings, a `string`; use `Buffer.byteLength(chunk)` to count bytes. A Buffer
+  or string body is a single chunk, unless a `scheduler` splits it into 64 KiB
+  chunks.
+- `onRequestEnd()` runs once the whole request, body included, has been
+  written.
+
+```js
+client.dispatch(
+  { path: "/upload", method: "PUT", body: stream },
+  {
+    onRequestBegin() {},
+    onRequestData(chunk) {
+      sent += Buffer.byteLength(chunk);
+    },
+    onRequestEnd() {},
+    // onConnect, onHeaders, onData, onComplete, onError ...
+  },
+);
+```
+
+The hooks run after `onConnect()`. A request that fails or is aborted while it
+is written, or whose response completes before its body has been written,
+gets `onError()` or `onComplete()` without `onRequestEnd()`. No hook runs
+after the request has completed, failed or been upgraded. A hook that throws
+fails the request with that error. A response can start before
+`onRequestEnd()` when the server answers early.
+
 ## Closed stream bodies
 
 A stream passed as a request `body` may already be closed when the request is

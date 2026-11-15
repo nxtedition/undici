@@ -70,7 +70,13 @@ async function types () {
     },
     onError (reason) {
       acceptsUnknown(reason)
-    }
+    },
+    onRequestBegin () {},
+    onRequestData (chunk) {
+      chunk satisfies Uint8Array | string
+      Buffer.byteLength(chunk).toFixed()
+    },
+    onRequestEnd () {}
   }
 
   client.dispatch({

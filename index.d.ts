@@ -258,6 +258,12 @@ export namespace Dispatcher {
     /** Called before bytes are written. The callback accepts arbitrary abort reasons. */
     onConnect(abort: (reason?: unknown) => void, context?: unknown): void
     onError(error: unknown): void
+    /** Called once, before the request head is written. A stream or iterable body is read first, so the head goes out with its first chunk. */
+    onRequestBegin?(): void
+    /** Called with each non-empty request body chunk, as read from the body, before it is written. */
+    onRequestData?(chunk: Uint8Array | string): void
+    /** Called once the whole request, body included, has been written. Not called if the request fails or the response completes first. */
+    onRequestEnd?(): void
   }
 
   interface ResponseDispatchHandler extends DispatchHandlerBase {
