@@ -123,9 +123,12 @@ client.dispatch(
 );
 ```
 
-The hooks run after `onConnect()`. A request that fails or is aborted while it
-is written, or whose response completes before its body has been written,
-gets `onError()` or `onComplete()` without `onRequestEnd()`. No hook runs
+The hooks run after `onConnect()`. A pipelined request whose connection closes
+before its response is written again on a new connection, and reports again
+from `onConnect()`, so reset per-write state in `onRequestBegin()`. A request
+that fails or is aborted while it is written, or whose response completes
+before its body has been written, gets `onError()` or `onComplete()` without
+`onRequestEnd()`. No hook runs
 after the request has completed, failed or been upgraded. A hook that throws
 fails the request with that error. A response can start before
 `onRequestEnd()` when the server answers early.
