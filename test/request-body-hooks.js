@@ -181,6 +181,45 @@ for (const hook of ['onRequestBegin', 'onRequestData', 'onRequestEnd']) {
   }
 }
 
+for (const [name, body] of [
+  ['stream', () => Readable.from(['hello'])],
+  ['iterable', () => ['hello']]
+]) {
+  for (const throws of [false, true]) {
+    test(`onRequestEnd can dispatch another request and ${throws ? 'throw' : 'return'} with a ${name} body`, async t => {
+      // Keep a reentrant request queued until the hook succeeds or its upload aborts.
+      const client = new Client(await startServer(t), { pipelining: 2 })
+      t.after(() => client.destroy())
+
+      const failure = new Error('hook failed')
+      let next
+      let connected = false
+      let connectedDuringHook
+      const result = await dispatch(client, {
+        path: '/',
+        method: 'POST',
+        blocking: false,
+        body: body()
+      }, {
+        onRequestEnd () {
+          next = dispatch(client, { path: '/', method: 'POST', body: 'next', idempotent: true }, {
+            onConnect () { connected = true }
+          })
+          connectedDuringHook = connected
+          if (throws) throw failure
+        }
+      })
+
+      assert.equal(connectedDuringHook, false)
+      assert.equal(result.error, throws ? failure : null)
+      assert.equal(result.events.at(-1), throws ? 'error' : 'complete')
+      const subsequent = await next
+      assert.equal(subsequent.error, null)
+      assert.equal(subsequent.response, 'next')
+    })
+  }
+}
+
 test('aborting from onRequestData fails the request without onRequestEnd', async t => {
   const client = new Client(await startServer(t))
   t.after(() => client.destroy())

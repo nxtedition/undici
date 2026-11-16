@@ -97,7 +97,7 @@ enabled case uses lightweight AsyncLocalStorage hooks without an SDK or exporter
 A `dispatch()` handler can observe the request being written with three
 optional methods:
 
-- `onRequestBegin()` runs once, before the request head is written. A stream
+- `onRequestBegin()` runs once per write attempt, before the request head is written. A stream
   or iterable body is read before its head goes out, so this runs when its
   first non-empty chunk arrives, or when it ends empty.
 - `onRequestData(chunk)` runs for each non-empty body chunk, before it is
@@ -123,9 +123,10 @@ client.dispatch(
 );
 ```
 
-The hooks run after `onConnect()`. A pipelined request whose connection closes
-before its response is written again on a new connection, and reports again
-from `onConnect()`, so reset per-write state in `onRequestBegin()`. A request
+The hooks run after `onConnect()`. If a pipelined request's connection closes
+before its response arrives, the request may be written again on a new
+connection and report again from `onConnect()`, so reset per-write state in
+`onRequestBegin()`. A request
 that fails or is aborted while it is written, or whose response completes
 before its body has been written, gets `onError()` or `onComplete()` without
 `onRequestEnd()`. No hook runs
