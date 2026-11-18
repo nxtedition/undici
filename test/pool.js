@@ -504,6 +504,44 @@ test('invalid pool dispatch options', async (t) => {
   t.throws(() => pool.dispatch({}, {}), errors.InvalidArgumentError, 'throws on invalid handler')
 })
 
+test('a direct client stays writable when it rejects a request synchronously', async (t) => {
+  const client = new Client('http://localhost')
+  t.after(() => client.close())
+  let failure
+  const writable = client.dispatch({ path: 123, method: 'GET' }, {
+    onError (err) { failure = err }
+  })
+  assert.strictEqual(failure?.code, 'UND_ERR_INVALID_ARG')
+  assert.strictEqual(writable, true)
+})
+
+for (const Dispatcher of [Client, Pool]) {
+  test(`a backpressured ${Dispatcher.name} still waits for drain after a rejected dispatch`, async (t) => {
+    let release
+    const server = createServer((req, res) => {
+      res.write('first')
+      release = () => res.end()
+    })
+    await new Promise(resolve => server.listen(0, resolve))
+    const dispatcher = new Dispatcher(`http://localhost:${server.address().port}`, { connections: 1, pipelining: 1 })
+    t.after(async () => {
+      release?.()
+      await dispatcher.destroy()
+      server.closeAllConnections()
+      await new Promise(resolve => server.close(resolve))
+    })
+
+    const first = await dispatcher.request({ path: '/', method: 'GET' })
+    const drain = new Promise(resolve => dispatcher.once('drain', resolve))
+    let failure
+    assert.strictEqual(dispatcher.dispatch(null, { onError (err) { failure = err } }), false)
+    assert.strictEqual(failure?.code, 'UND_ERR_INVALID_ARG')
+    release()
+    assert.strictEqual(await first.body.text(), 'first')
+    await withTimeout(drain, 'held request must release capacity')
+  })
+}
+
 test('pool remains writable after a child rejects before queueing', async (t) => {
   const server = createServer((req, res) => {
     res.end('ok')
