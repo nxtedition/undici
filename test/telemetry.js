@@ -167,23 +167,43 @@ test('observer failures do not block completion; aborting a queued request ends 
 })
 
 test('a run that breaks its contract still delivers every callback once', async t => {
-  const server = createServer((_req, res) => res.end('ok')).listen(0, '127.0.0.1')
+  const server = createServer((req, res) => {
+    if (req.url === '/reset') req.socket.destroy()
+    else res.end('ok')
+  }).listen(0, '127.0.0.1')
   await once(server, 'listening')
   const client = new Client(`http://127.0.0.1:${server.address().port}`)
   t.after(async () => { await client.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
   const runs = {
     throws: () => { throw new Error('run boom') },
+    rejects: async () => { throw new Error('run boom') },
     skips: () => undefined,
     defers: callback => { setImmediate(callback) }
   }
   for (const [name, run] of Object.entries(runs)) {
     const ends = []
-    const response = await client.request({ path: '/', method: 'GET', telemetry: {
+    const telemetry = {
       capture: () => ({ run, start: () => ({ end: result => ends.push(result.type) }) })
-    } })
+    }
+    const response = await client.request({ path: '/', method: 'GET', telemetry })
     assert.equal(await response.body.text(), 'ok', name)
-    await new Promise(resolve => setImmediate(resolve))
-    assert.deepEqual(ends, ['complete'], name)
+
+    // A raw dispatch handler sees each callback once, on success and failure.
+    for (const [path, terminal] of [['/', 'onComplete'], ['/reset', 'onError']]) {
+      const calls = []
+      await new Promise(resolve => client.dispatch({ path, method: 'GET', telemetry }, {
+        onConnect () { calls.push('onConnect') },
+        onHeaders () { calls.push('onHeaders'); return true },
+        onData () { return true },
+        onComplete () { calls.push('onComplete'); resolve() },
+        onError () { calls.push('onError'); resolve() }
+      }))
+      await new Promise(resolve => setImmediate(resolve))
+      assert.deepEqual(calls, terminal === 'onComplete'
+        ? ['onConnect', 'onHeaders', 'onComplete']
+        : ['onConnect', 'onError'], `${name} ${path}`)
+    }
+    assert.deepEqual(ends, ['complete', 'complete', 'error'], name)
   }
 })
 
