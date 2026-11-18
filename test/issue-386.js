@@ -6,6 +6,7 @@ const { Readable } = require('node:stream')
 const { test } = require('node:test')
 
 const { Client, Pool } = require('..')
+const { kPending, kQueued } = require('../lib/core/symbols')
 
 function createClient (t) {
   let connections = 0
@@ -85,8 +86,11 @@ for (const Dispatcher of [Client, Pool]) {
     const body = Readable.from(['upload'])
     const errors = []
     client.request({ path: '/cancel', method: 'POST', body, signal: controller.signal }, err => errors.push(err))
+    const queued = Dispatcher === Client ? kPending : kQueued
+    assert.strictEqual(client[queued], 1)
     controller.abort(reason)
     await new Promise(setImmediate)
+    assert.strictEqual(client[queued], 0)
     assert.deepStrictEqual(errors, [reason])
     assert.strictEqual(body.destroyed, true)
 
