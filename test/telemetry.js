@@ -157,6 +157,7 @@ test('observer failures do not block completion; aborting a queued request ends 
   await rejected
   assert.equal(hooks.attempts[1].results.length, 1)
   assert.equal(hooks.attempts[1].results[0].type, 'error')
+  assert.equal(hooks.attempts[1].results[0].aborted, true)
   const response = await client.request({ path: '/', method: 'GET', telemetry: {
     capture: () => ({ run: callback => callback(), start: () => ({
       end () { throw new Error('observer') }
