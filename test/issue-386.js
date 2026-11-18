@@ -1,10 +1,11 @@
 'use strict'
 
 const assert = require('node:assert/strict')
+const { createServer } = require('node:http')
 const { Readable } = require('node:stream')
 const { test } = require('node:test')
 
-const { Client } = require('..')
+const { Client, Pool } = require('..')
 
 function createClient (t) {
   let connections = 0
@@ -55,3 +56,45 @@ test('an already aborted request destroys a stream body', async (t) => {
   assert.strictEqual(body.destroyed, true)
   assert.strictEqual(connections(), 0)
 })
+
+for (const Dispatcher of [Client, Pool]) {
+  test(`${Dispatcher.name} reports a queued abort before the active request completes`, async (t) => {
+    let finish
+    const paths = []
+    const server = createServer((req, res) => {
+      paths.push(req.url)
+      if (req.url === '/hold') {
+        res.write('held')
+        finish = () => res.end()
+      } else {
+        res.end('ok')
+      }
+    })
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    const client = new Dispatcher(`http://127.0.0.1:${server.address().port}`, { connections: 1, pipelining: 1 })
+    t.after(async () => {
+      finish?.()
+      await client.destroy()
+      server.closeAllConnections()
+      await new Promise(resolve => server.close(resolve))
+    })
+
+    const held = await client.request({ path: '/hold', method: 'GET' })
+    const controller = new AbortController()
+    const reason = new Error('cancel queued upload')
+    const body = Readable.from(['upload'])
+    const errors = []
+    client.request({ path: '/cancel', method: 'POST', body, signal: controller.signal }, err => errors.push(err))
+    controller.abort(reason)
+    await new Promise(setImmediate)
+    assert.deepStrictEqual(errors, [reason])
+    assert.strictEqual(body.destroyed, true)
+
+    finish()
+    await held.body.dump()
+    const next = await client.request({ path: '/next', method: 'GET' })
+    assert.strictEqual(await next.body.text(), 'ok')
+    assert.deepStrictEqual(paths, ['/hold', '/next'])
+    assert.deepStrictEqual(errors, [reason])
+  })
+}
