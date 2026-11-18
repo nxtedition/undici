@@ -166,6 +166,27 @@ test('observer failures do not block completion; aborting a queued request ends 
   assert.equal(await response.body.text(), 'ok')
 })
 
+test('a run that breaks its contract still delivers every callback once', async t => {
+  const server = createServer((_req, res) => res.end('ok')).listen(0, '127.0.0.1')
+  await once(server, 'listening')
+  const client = new Client(`http://127.0.0.1:${server.address().port}`)
+  t.after(async () => { await client.destroy(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) })
+  const runs = {
+    throws: () => { throw new Error('run boom') },
+    skips: () => undefined,
+    defers: callback => { setImmediate(callback) }
+  }
+  for (const [name, run] of Object.entries(runs)) {
+    const ends = []
+    const response = await client.request({ path: '/', method: 'GET', telemetry: {
+      capture: () => ({ run, start: () => ({ end: result => ends.push(result.type) }) })
+    } })
+    assert.equal(await response.body.text(), 'ok', name)
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(ends, ['complete'], name)
+  }
+})
+
 test('attempt fields must be declared before queues and cache lookup', async t => {
   const client = new Client('http://localhost')
   t.after(() => client.destroy())
