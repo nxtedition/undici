@@ -504,6 +504,17 @@ test('invalid pool dispatch options', async (t) => {
   t.throws(() => pool.dispatch({}, {}), errors.InvalidArgumentError, 'throws on invalid handler')
 })
 
+test('a direct client stays writable when it rejects a request synchronously', async (t) => {
+  const client = new Client('http://localhost')
+  t.after(() => client.close())
+  let failure
+  const writable = client.dispatch({ path: 123, method: 'GET' }, {
+    onError (err) { failure = err }
+  })
+  assert.strictEqual(failure?.code, 'UND_ERR_INVALID_ARG')
+  assert.strictEqual(writable, true)
+})
+
 test('pool remains writable after a child rejects before queueing', async (t) => {
   const server = createServer((req, res) => {
     res.end('ok')
