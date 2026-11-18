@@ -73,8 +73,10 @@ The application supplies `telemetry` with this synchronous contract:
 
 The exported TypeScript interfaces are `Telemetry`, `TelemetryContext`,
 `TelemetryRequest`, `TelemetrySpan` and `TelemetryResult`. There is no telemetry
-runtime export or interceptor to install. Hooks must be synchronous;
-`capture`, `start` and `run` failures follow normal request error handling.
+runtime export or interceptor to install. Hooks must be synchronous.
+Exceptions from `capture`, `start` and transport callbacks follow normal request
+error handling. If `run` fails to invoke a callback synchronously, Undici runs
+it once outside that context. The callback's own return value is preserved.
 Observer exceptions from `end` are ignored so transport cleanup and
 terminal callback delivery still complete. Tracing integrations choose sampling,
 suppression, parentless behavior and any OpenTelemetry SDK configuration.

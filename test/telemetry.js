@@ -116,6 +116,14 @@ test('invalid hooks and request options fail normally; parentless capture bypass
   assert.equal(hooks.attempts[0].results.length, 1)
   await assert.rejects(client.request({ path: 'invalid', method: 'GET', telemetry: hooks.telemetry }), /path/)
   assert.equal(hooks.attempts.length, 1)
+  const error = new Error('start failed')
+  const telemetry = {
+    capture: () => ({
+      run (callback) { try { return callback() } catch {} },
+      start () { throw error }
+    })
+  }
+  await assert.rejects(client.request({ path: 'invalid', method: 'GET', telemetry }), err => err === error)
 })
 
 test('upgrades finish the attempt and retain the original handler receiver', async t => {
@@ -166,7 +174,7 @@ test('observer failures do not block completion; aborting a queued request ends 
   assert.equal(await response.body.text(), 'ok')
 })
 
-test('a run that breaks its contract still delivers every callback once', async t => {
+test('a run that breaks its contract still delivers every callback once', { timeout: 5000 }, async t => {
   const server = createServer((req, res) => {
     if (req.url === '/reset') req.socket.destroy()
     else res.end('ok')
@@ -177,6 +185,9 @@ test('a run that breaks its contract still delivers every callback once', async 
   const runs = {
     throws: () => { throw new Error('run boom') },
     rejects: async () => { throw new Error('run boom') },
+    throwsAfter: callback => { callback(); throw new Error('run boom') },
+    rejectsAfter: async callback => { callback(); throw new Error('run boom') },
+    returnsThenable: () => ({ then () { throw new Error('run boom') } }),
     skips: () => undefined,
     defers: callback => { setImmediate(callback) }
   }
@@ -191,17 +202,34 @@ test('a run that breaks its contract still delivers every callback once', async 
     // A raw dispatch handler sees each callback once, on success and failure.
     for (const [path, terminal] of [['/', 'onComplete'], ['/reset', 'onError']]) {
       const calls = []
-      await new Promise(resolve => client.dispatch({ path, method: 'GET', telemetry }, {
+      let resumed = false
+      let body = ''
+      const { promise, resolve } = Promise.withResolvers()
+      const writable = client.dispatch({ path, method: 'GET', telemetry }, {
         onConnect () { calls.push('onConnect') },
-        onHeaders () { calls.push('onHeaders'); return true },
-        onData () { return true },
+        onHeaders (_status, _headers, resume) {
+          calls.push('onHeaders')
+          setImmediate(() => {
+            resumed = true
+            resume()
+          })
+          return false
+        },
+        onData (chunk) {
+          assert.ok(resumed, name)
+          body += chunk
+          return true
+        },
         onComplete () { calls.push('onComplete'); resolve() },
         onError () { calls.push('onError'); resolve() }
-      }))
+      })
+      assert.equal(typeof writable, 'boolean', `${name} ${path}`)
+      await promise
       await new Promise(resolve => setImmediate(resolve))
       assert.deepEqual(calls, terminal === 'onComplete'
         ? ['onConnect', 'onHeaders', 'onComplete']
         : ['onConnect', 'onError'], `${name} ${path}`)
+      assert.equal(body, terminal === 'onComplete' ? 'ok' : '', `${name} ${path}`)
     }
     assert.deepEqual(ends, ['complete', 'complete', 'error'], name)
   }
