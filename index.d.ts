@@ -470,7 +470,12 @@ export namespace buildConnector {
   type Callback = (...args: [error: null, socket: Socket | TLSSocket] | [error: Error, socket: null]) => void
 
   interface Connector {
-    (options: Options, callback: Callback): void
+    /**
+     * Return the connecting socket so Client can destroy the attempt when no
+     * request waits for it. A connector that returns nothing remains valid,
+     * but its attempt runs until it connects or fails.
+     */
+    (options: Options, callback: Callback): Socket | TLSSocket | void
   }
 
   interface BuiltConnector {

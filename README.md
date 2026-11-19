@@ -156,6 +156,18 @@ with `RequestAbortedError`.
 If an incomplete upload must not succeed, destroy the stream with an error, or
 check `body.readableEnded` before sending it.
 
+## Connection attempts
+
+When every request waiting for a connection attempt is aborted, the client
+destroys the connecting socket instead of holding a Client or Pool slot until
+the connect timeout. A request already queued in a Pool or dispatched in the
+same turn keeps the attempt alive.
+
+The built-in connector returns its connecting socket. A custom `connect`
+function must also return the socket if it wants this cancellation behavior;
+one that returns nothing remains supported, but its attempt runs until it
+connects or fails.
+
 ## Scheduled socket I/O
 
 Servers that don't honor request priority, such as S3, serve every request
