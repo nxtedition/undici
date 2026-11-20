@@ -27,7 +27,7 @@ declare const overloadedScheduler: {
   release: (tokens?: number) => void
 }
 
-async function types (headersTimeout?: number) {
+async function types (headersTimeout?: number, bodyTimeout?: number) {
   const client = new Client('http://localhost', {
     socketPath: '/tmp/undici.sock',
     connect (options, callback) {
@@ -97,6 +97,30 @@ async function types (headersTimeout?: number) {
   client.request({ path: '/', method: 'POST', body: [new SharedArrayBuffer(2)] })
   client.request({ path: '/', method: 'GET', headersTimeout })
   client.request({ path: '/', method: 'GET', telemetry: undefined })
+
+  const dispatchOptions = {
+    path: '/',
+    method: 'GET',
+    origin: undefined,
+    bodyTimeout,
+    body: undefined,
+    headers: undefined,
+    query: undefined,
+    idempotent: undefined,
+    blocking: undefined,
+    typeOfService: undefined,
+    scheduler: undefined,
+    priority: undefined,
+    upgrade: undefined,
+    reset: undefined,
+    expectContinue: undefined,
+    servername: undefined
+  }
+  client.dispatch(dispatchOptions, handler)
+  client.request({ ...dispatchOptions, signal: undefined, highWaterMark: undefined, throwOnError: undefined })
+  request('http://localhost', { path: undefined, method: undefined, dispatcher: undefined, agent: undefined })
+  // @ts-expect-error The top-level request API accepts a dispatcher in the dispatcher field.
+  request('http://localhost', { agent: client })
 
   client.request({
     path: '/',
@@ -176,12 +200,16 @@ async function types (headersTimeout?: number) {
   })
   omittedOpaqueResponse.opaque satisfies null
 
-  const undefinedOpaqueResponse = await client.request({
+  const undefinedOpaqueOptions = {
     path: '/',
     method: 'GET',
     opaque: undefined
-  })
+  } satisfies Dispatcher.RequestOptions
+  const undefinedOpaqueResponse = await client.request(undefinedOpaqueOptions)
   undefinedOpaqueResponse.opaque satisfies null
+
+  // @ts-expect-error A string opaque result requires a string when opaque is supplied.
+  client.request<string>(undefinedOpaqueOptions)
 
   const optionalOpaque: string | undefined = Math.random() > 0.5 ? 'value' : undefined
   const optionalOpaqueResponse = await client.request({
@@ -315,6 +343,8 @@ async function types (headersTimeout?: number) {
 
   // @ts-expect-error Agent requests require an origin.
   agent.request({ path: '/', method: 'GET' })
+  // @ts-expect-error An Agent also needs a concrete origin when forwarding dispatch options.
+  agent.dispatch(dispatchOptions, handler)
 
   // @ts-expect-error The reduced runtime does not export fetch.
   const unsupportedFetch = undici.fetch

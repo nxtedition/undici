@@ -195,25 +195,25 @@ export namespace Dispatcher {
   interface DispatchOptions {
     /** Optional tracing hooks for this request; null/undefined/false disable instrumentation. */
     telemetry?: Telemetry | false | null | undefined
-    origin?: string | URL
+    origin?: string | URL | undefined
     path: string
     method: string
-    body?: RequestBody
-    headers?: HeadersInit
-    query?: ParsedUrlQueryInput
-    idempotent?: boolean
-    blocking?: boolean
-    typeOfService?: number | null
+    body?: RequestBody | undefined
+    headers?: HeadersInit | undefined
+    query?: ParsedUrlQueryInput | undefined
+    idempotent?: boolean | undefined
+    blocking?: boolean | undefined
+    typeOfService?: number | null | undefined
     /**
      * Orders this request's socket I/O against other requests, e.g. with an
      * `@nxtedition/scheduler` `Scheduler`. See "Scheduled socket I/O" in
      * README.md.
      */
-    scheduler?: Scheduler | null
+    scheduler?: Scheduler | null | undefined
     /** Priority passed to `scheduler.acquire()`. */
-    priority?: number | string | null
+    priority?: number | string | null | undefined
     /** Protocol name for an upgrade request. */
-    upgrade?: string | null
+    upgrade?: string | null | undefined
     /**
      * The time, in milliseconds, allowed to receive complete response headers.
      * Use `0` to disable it. HTTP/1.1 parser timeouts use lower-overhead fast
@@ -227,21 +227,21 @@ export namespace Dispatcher {
      * with a target resolution around 500 ms, so they are not guaranteed to
      * fire with exact millisecond precision.
      */
-    bodyTimeout?: number | null
-    reset?: boolean | null
-    expectContinue?: boolean | null
-    servername?: string | null
+    bodyTimeout?: number | null | undefined
+    reset?: boolean | null | undefined
+    expectContinue?: boolean | null | undefined
+    servername?: string | null | undefined
   }
 
   interface RequestOptions<TOpaque = null> extends Omit<DispatchOptions, 'upgrade'> {
     /** Passed through on successful responses; nullish values are normalized to null. */
-    opaque?: TOpaque
-    signal?: RequestSignal | null
-    highWaterMark?: number | null
+    opaque?: TOpaque | (null extends TOpaque ? undefined : never)
+    signal?: RequestSignal | null | undefined
+    highWaterMark?: number | null | undefined
     /** The high-level request API does not support protocol upgrades. */
-    upgrade?: null
+    upgrade?: null | undefined
     /** This reduced build does not implement throwOnError. */
-    throwOnError?: null
+    throwOnError?: null | undefined
   }
 
   interface ResponseData<TOpaque = null> {
@@ -621,12 +621,12 @@ export namespace errors {
 
 export interface TopLevelRequestOptions<TOpaque = null>
   extends Omit<Dispatcher.RequestOptions<TOpaque>, 'origin' | 'path' | 'method'> {
-  dispatcher?: Dispatcher
+  dispatcher?: Dispatcher | undefined
   /** Request path to use with an origin-only URL (without a path, query, or fragment). */
-  path?: string
-  method?: string
+  path?: string | undefined
+  method?: string | undefined
   /** Unsupported; use dispatcher. */
-  agent?: never
+  agent?: undefined
 }
 
 export function request<TOpaque = null> (
