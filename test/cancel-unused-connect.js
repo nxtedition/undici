@@ -4,6 +4,7 @@ const assert = require('node:assert')
 const { once } = require('node:events')
 const https = require('node:https')
 const net = require('node:net')
+const { PassThrough } = require('node:stream')
 const { test } = require('node:test')
 const pem = require('@metcoder95/https-pem')
 
@@ -119,6 +120,35 @@ test('a request queued in the Pool keeps the connection attempt', async (t) => {
   assert.strictEqual(server.accepted(), 1)
 })
 
+for (const returnsSocket of [true, false]) {
+  test(`a new TLS server name gets a matching connection (connector returns socket: ${returnsSocket})`, async (t) => {
+    // The queue head changes while the handshake for the first name is stalled.
+    const server = await startServer(t)
+    const connector = buildConnector({ rejectUnauthorized: false })
+    const names = []
+    const pool = new Pool(server.origin, {
+      connections: 1,
+      connect (opts, callback) {
+        names.push(opts.servername)
+        const socket = connector(opts, callback)
+        if (returnsSocket) return socket
+      }
+    })
+    t.after(() => pool.destroy())
+    const controller = new AbortController()
+    const first = pool.request({ path: '/', method: 'GET', servername: 'first.test', signal: controller.signal })
+    const second = pool.request({ path: '/', method: 'GET', servername: 'second.test' })
+    const { forward } = await settlesWithin(server.firstAccepted)
+    controller.abort()
+    await assert.rejects(first, { name: 'AbortError' })
+    if (!returnsSocket) forward()
+    const { body } = await settlesWithin(second)
+    assert.strictEqual(await body.text(), 'ok')
+    assert.deepStrictEqual(names, ['first.test', 'second.test'])
+    await settlesWithin(server.firstClosed())
+  })
+}
+
 test('another pipelined request keeps the connection attempt', async (t) => {
   const server = await startServer(t)
   const client = new Client(server.origin, {
@@ -193,6 +223,22 @@ for (const returnsSocket of [true, false]) {
     assert.strictEqual(server.accepted(), 1)
   })
 }
+
+test('an incidental stream returned by a callback connector stays caller-owned', async (t) => {
+  // A callback-style connector can return the stream it is waiting on for input.
+  const input = new PassThrough()
+  t.after(() => input.destroy())
+  const client = new Client('http://localhost', {
+    connect: (opts, callback) => input.once('end', () => callback(new Error('input ended'), null))
+  })
+  const controller = new AbortController()
+  const request = client.request({ path: '/', method: 'GET', signal: controller.signal })
+  controller.abort()
+  await assert.rejects(request, { name: 'AbortError' })
+  await client.destroy()
+  assert.ok(!input.destroyed)
+  input.end().resume()
+})
 
 for (const Dispatcher of [Client, Pool]) {
   test(`destroying a ${Dispatcher.name} cancels its pending connection`, async (t) => {

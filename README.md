@@ -161,13 +161,14 @@ check `body.readableEnded` before sending it.
 When every request waiting for a connection attempt is aborted, the client
 destroys the connecting socket instead of holding a Client or Pool slot until
 the connect timeout. A request already queued in a Pool, or dispatched
-synchronously after the abort, keeps the attempt alive. Destroying the
-dispatcher also cancels its pending socket.
+synchronously after the abort, can reuse the attempt. If it needs a different
+TLS server name, it starts a matching connection. Destroying the dispatcher
+also cancels its pending socket.
 
 The built-in connector returns its connecting socket. A custom `connect`
-function must also return the socket if it wants this cancellation behavior;
-one that returns nothing remains supported, but its attempt runs until it
-connects or fails.
+function can opt into cancellation by returning its connecting `net.Socket` or
+`tls.TLSSocket`. For callback-only connectors and other return values, the
+attempt runs until the callback reports success or failure.
 
 ## Scheduled socket I/O
 

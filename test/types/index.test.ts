@@ -1,5 +1,6 @@
 import { Blob } from 'node:buffer'
 import { EventEmitter } from 'node:events'
+import { Socket } from 'node:net'
 import undici, {
   Agent,
   Client,
@@ -264,7 +265,15 @@ async function types () {
     connect: (options, callback) => setImmediate(connector, options, callback)
   })
 
-  const connectingSocket = connector({ hostname: 'localhost', protocol: 'http:', socketPath: '/tmp/undici.sock' }, (error, socket) => {
+  // Wrappers can inspect an opaque connector or retain a known socket return type.
+  const wrapConnector = (connect: buildConnector.Connector): buildConnector.Connector => (options, callback) => {
+    const result = connect(options, callback)
+    if (result instanceof Socket) result.setNoDelay(true)
+    return result
+  }
+  new Client('http://localhost', { connect: wrapConnector(connector) })
+  const socketConnector: buildConnector.Connector<Socket> = connector
+  const connectingSocket = socketConnector({ hostname: 'localhost', protocol: 'http:', socketPath: '/tmp/undici.sock' }, (error, socket) => {
     if (error === null && socket) {
       socket.destroy()
     } else {
