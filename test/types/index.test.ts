@@ -27,7 +27,7 @@ declare const overloadedScheduler: {
   release: (tokens?: number) => void
 }
 
-async function types () {
+async function types (headersTimeout?: number) {
   const client = new Client('http://localhost', {
     socketPath: '/tmp/undici.sock',
     connect (options, callback) {
@@ -95,6 +95,8 @@ async function types () {
   }, handler)
 
   client.request({ path: '/', method: 'POST', body: [new SharedArrayBuffer(2)] })
+  client.request({ path: '/', method: 'GET', headersTimeout })
+  client.request({ path: '/', method: 'GET', telemetry: undefined })
 
   client.request({
     path: '/',

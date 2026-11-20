@@ -194,7 +194,7 @@ export namespace Dispatcher {
 
   interface DispatchOptions {
     /** Optional tracing hooks for this request; null/undefined/false disable instrumentation. */
-    telemetry?: Telemetry | false | null
+    telemetry?: Telemetry | false | null | undefined
     origin?: string | URL
     path: string
     method: string
@@ -220,7 +220,7 @@ export namespace Dispatcher {
      * timers with a target resolution around 500 ms, so they are not guaranteed
      * to fire with exact millisecond precision.
      */
-    headersTimeout?: number | null
+    headersTimeout?: number | null | undefined
     /**
      * The time, in milliseconds, allowed between response body chunks. Use `0`
      * to disable it. HTTP/1.1 parser timeouts use lower-overhead fast timers
