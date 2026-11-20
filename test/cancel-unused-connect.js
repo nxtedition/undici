@@ -8,6 +8,7 @@ const { test } = require('node:test')
 const pem = require('@metcoder95/https-pem')
 
 const { Client, Pool, buildConnector } = require('..')
+const { kConnect } = require('../lib/core/symbols')
 
 function settlesWithin (promise, ms = 2000) {
   let timer
@@ -19,16 +20,14 @@ function settlesWithin (promise, ms = 2000) {
   ]).finally(() => clearTimeout(timer))
 }
 
-async function startServer (t, { delayFirst = null } = {}) {
+async function startServer (t) {
   const server = https.createServer(pem, (req, res) => res.end('ok'))
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
 
   const sockets = []
   let accepted = 0
-  let first = null
-  let resolveFirst
-  const firstAccepted = new Promise(resolve => { resolveFirst = resolve })
+  const first = Promise.withResolvers()
   const front = net.createServer(socket => {
     accepted++
     sockets.push(socket)
@@ -41,17 +40,10 @@ async function startServer (t, { delayFirst = null } = {}) {
       upstream.on('error', () => socket.destroy())
     }
 
-    if (first !== null) {
-      forward()
-      return
-    }
-
-    first = socket
-    resolveFirst(socket)
-    if (delayFirst === null) {
-      socket.resume()
+    if (accepted === 1) {
+      first.resolve({ socket, forward })
     } else {
-      setTimeout(forward, delayFirst)
+      forward()
     }
   })
   front.listen(0, '127.0.0.1')
@@ -66,8 +58,10 @@ async function startServer (t, { delayFirst = null } = {}) {
   return {
     origin: `https://localhost:${front.address().port}`,
     accepted: () => accepted,
+    firstAccepted: first.promise,
     async firstClosed () {
-      const socket = await firstAccepted
+      const { socket } = await first.promise
+      socket.resume()
       if (!socket.destroyed) await once(socket, 'close')
     }
   }
@@ -88,7 +82,7 @@ for (const connectTimeout of [undefined, 0]) {
 
     const controller = new AbortController()
     const first = pool.request({ path: '/', method: 'GET', signal: controller.signal })
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await settlesWithin(server.firstAccepted)
     controller.abort()
     await assert.rejects(settlesWithin(first), { name: 'AbortError' })
     await settlesWithin(server.firstClosed())
@@ -102,7 +96,7 @@ for (const connectTimeout of [undefined, 0]) {
 }
 
 test('a request queued in the Pool keeps the connection attempt', async (t) => {
-  const server = await startServer(t, { delayFirst: 300 })
+  const server = await startServer(t)
   const pool = new Pool(server.origin, {
     connections: 1,
     connect: { rejectUnauthorized: false }
@@ -112,12 +106,13 @@ test('a request queued in the Pool keeps the connection attempt', async (t) => {
   const controller = new AbortController()
   const first = pool.request({ path: '/', method: 'GET', signal: controller.signal })
   const second = pool.request({ path: '/', method: 'GET' })
-  await new Promise(resolve => setTimeout(resolve, 50))
+  const { forward } = await settlesWithin(server.firstAccepted)
   assert.strictEqual(pool.stats.queued, 1)
 
   controller.abort()
   await assert.rejects(settlesWithin(first), { name: 'AbortError' })
 
+  forward()
   const { statusCode, body } = await settlesWithin(second)
   assert.strictEqual(statusCode, 200)
   assert.strictEqual(await body.text(), 'ok')
@@ -125,7 +120,7 @@ test('a request queued in the Pool keeps the connection attempt', async (t) => {
 })
 
 test('another pipelined request keeps the connection attempt', async (t) => {
-  const server = await startServer(t, { delayFirst: 300 })
+  const server = await startServer(t)
   const client = new Client(server.origin, {
     pipelining: 2,
     connect: { rejectUnauthorized: false }
@@ -135,10 +130,11 @@ test('another pipelined request keeps the connection attempt', async (t) => {
   const controller = new AbortController()
   const first = client.request({ path: '/', method: 'GET', signal: controller.signal })
   const second = client.request({ path: '/', method: 'GET' })
-  await new Promise(resolve => setTimeout(resolve, 50))
+  const { forward } = await settlesWithin(server.firstAccepted)
   controller.abort()
   await assert.rejects(settlesWithin(first), { name: 'AbortError' })
 
+  forward()
   const { statusCode, body } = await settlesWithin(second)
   assert.strictEqual(statusCode, 200)
   assert.strictEqual(await body.text(), 'ok')
@@ -146,7 +142,7 @@ test('another pipelined request keeps the connection attempt', async (t) => {
 })
 
 test('a request dispatched in the aborting turn keeps the connection attempt', async (t) => {
-  const server = await startServer(t, { delayFirst: 300 })
+  const server = await startServer(t)
   const client = new Client(server.origin, {
     connect: { rejectUnauthorized: false }
   })
@@ -154,12 +150,13 @@ test('a request dispatched in the aborting turn keeps the connection attempt', a
 
   const controller = new AbortController()
   const first = client.request({ path: '/', method: 'GET', signal: controller.signal })
-  await new Promise(resolve => setTimeout(resolve, 50))
+  const { forward } = await settlesWithin(server.firstAccepted)
 
   controller.abort()
   const second = client.request({ path: '/', method: 'GET' })
   await assert.rejects(settlesWithin(first), { name: 'AbortError' })
 
+  forward()
   const { statusCode, body } = await settlesWithin(second)
   assert.strictEqual(statusCode, 200)
   assert.strictEqual(await body.text(), 'ok')
@@ -168,7 +165,7 @@ test('a request dispatched in the aborting turn keeps the connection attempt', a
 
 for (const returnsSocket of [true, false]) {
   test(`a custom connector that ${returnsSocket ? 'returns' : 'does not return'} its socket`, async (t) => {
-    const server = await startServer(t, { delayFirst: returnsSocket ? null : 300 })
+    const server = await startServer(t)
     const connector = buildConnector({ rejectUnauthorized: false })
     const client = new Client(server.origin, {
       connect (opts, callback) {
@@ -180,7 +177,7 @@ for (const returnsSocket of [true, false]) {
 
     const controller = new AbortController()
     const first = client.request({ path: '/', method: 'GET', signal: controller.signal })
-    await new Promise(resolve => setTimeout(resolve, 50))
+    const { forward } = await settlesWithin(server.firstAccepted)
     controller.abort()
     await assert.rejects(settlesWithin(first), { name: 'AbortError' })
 
@@ -189,9 +186,63 @@ for (const returnsSocket of [true, false]) {
       return
     }
 
+    forward()
     const { statusCode, body } = await settlesWithin(client.request({ path: '/', method: 'GET' }))
     assert.strictEqual(statusCode, 200)
     assert.strictEqual(await body.text(), 'ok')
     assert.strictEqual(server.accepted(), 1)
   })
 }
+
+for (const Dispatcher of [Client, Pool]) {
+  test(`destroying a ${Dispatcher.name} cancels its pending connection`, async (t) => {
+    // A stalled connector may never call back, even after its socket is destroyed.
+    const socket = new net.Socket()
+    t.after(() => socket.destroy())
+    const dispatcher = new Dispatcher('http://localhost', { connect: () => socket })
+    const request = dispatcher.request({ path: '/', method: 'GET' })
+    const rejected = assert.rejects(request, { code: 'UND_ERR_DESTROYED' })
+    await dispatcher.destroy()
+    await rejected
+    assert.ok(socket.destroyed)
+  })
+}
+
+test('an explicit preconnect survives a request abort until the client is destroyed', async (t) => {
+  // A request can join and leave an attempt that was started independently.
+  const socket = new net.Socket()
+  t.after(() => socket.destroy())
+  const client = new Client('http://localhost', { connect: () => socket })
+  client[kConnect](() => {})
+  const controller = new AbortController()
+  const request = client.request({ path: '/', method: 'GET', signal: controller.signal })
+  controller.abort()
+  await assert.rejects(request, { name: 'AbortError' })
+  assert.ok(!socket.destroyed)
+  await client.destroy()
+  assert.ok(socket.destroyed)
+})
+
+test('shutdown during a connector call disposes both returned and late sockets', async (t) => {
+  // The connector can hand back a different socket after the client has shut down.
+  const connecting = new net.Socket()
+  const late = new net.Socket()
+  t.after(() => {
+    connecting.destroy()
+    late.destroy()
+  })
+  let finish
+  const client = new Client('http://localhost', {
+    connect (opts, callback) {
+      finish = callback
+      client.destroy()
+      return connecting
+    }
+  })
+  const request = client.request({ path: '/', method: 'GET' })
+  await assert.rejects(request, { code: 'UND_ERR_DESTROYED' })
+  await client.destroy()
+  assert.ok(connecting.destroyed)
+  finish(null, late)
+  assert.ok(late.destroyed)
+})

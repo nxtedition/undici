@@ -259,6 +259,11 @@ async function types () {
     rejectUnauthorized: false
   })
 
+  // Callback-style connectors can return the handle that schedules their work.
+  new Client('http://localhost', {
+    connect: (options, callback) => setImmediate(connector, options, callback)
+  })
+
   const connectingSocket = connector({ hostname: 'localhost', protocol: 'http:', socketPath: '/tmp/undici.sock' }, (error, socket) => {
     if (error === null && socket) {
       socket.destroy()

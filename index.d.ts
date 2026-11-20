@@ -472,10 +472,9 @@ export namespace buildConnector {
   interface Connector {
     /**
      * Return the connecting socket so Client can destroy the attempt when no
-     * request waits for it. A connector that returns nothing remains valid,
-     * but its attempt runs until it connects or fails.
+     * request waits for it. Callback-style connectors can omit the socket.
      */
-    (options: Options, callback: Callback): Socket | TLSSocket | void
+    (options: Options, callback: Callback): void
   }
 
   interface BuiltConnector {

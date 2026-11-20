@@ -160,8 +160,9 @@ check `body.readableEnded` before sending it.
 
 When every request waiting for a connection attempt is aborted, the client
 destroys the connecting socket instead of holding a Client or Pool slot until
-the connect timeout. A request already queued in a Pool or dispatched in the
-same turn keeps the attempt alive.
+the connect timeout. A request already queued in a Pool, or dispatched
+synchronously after the abort, keeps the attempt alive. Destroying the
+dispatcher also cancels its pending socket.
 
 The built-in connector returns its connecting socket. A custom `connect`
 function must also return the socket if it wants this cancellation behavior;
