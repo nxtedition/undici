@@ -469,8 +469,13 @@ export namespace buildConnector {
 
   type Callback = (...args: [error: null, socket: Socket | TLSSocket] | [error: Error, socket: null]) => void
 
-  interface Connector {
-    (options: Options, callback: Callback): void
+  interface Connector<Result = unknown> {
+    /**
+     * Return the connecting socket so Client can destroy the attempt when no
+     * request waits for it. Callback-style connectors can omit the socket
+     * or return an incidental value, such as a timer handle.
+     */
+    (options: Options, callback: Callback): Result
   }
 
   interface BuiltConnector {
