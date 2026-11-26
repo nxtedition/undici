@@ -8,7 +8,7 @@ const fs = require('node:fs')
 const https = require('node:https')
 const path = require('node:path')
 const tls = require('node:tls')
-const { Pool } = require('../..')
+const { Client, Pool, buildConnector } = require('../..')
 
 test('TLS altname errors reject pipelined requests', async (t) => {
   const server = https.createServer({
@@ -111,3 +111,62 @@ test('TLS certificate errors after connection establishment reject the request',
   await rejected
   assert.strictEqual(identityChecks, 2)
 })
+
+for (const afterHeaders of [false, true]) {
+  test(`a TLS socket error closes the connection ${afterHeaders ? 'after' : 'before'} response headers`, { timeout: 5000 }, async (t) => {
+    const received = Promise.withResolvers()
+    const server = https.createServer({
+      key: fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'key.pem')),
+      cert: fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'cert.pem'))
+    }, (req, res) => {
+      if (req.url === '/next') {
+        res.end('next')
+        return
+      }
+      if (afterHeaders) {
+        res.write('partial')
+      }
+      received.resolve()
+    })
+    server.listen(0, '127.0.0.1')
+    await once(server, 'listening')
+    t.after(() => {
+      server.closeAllConnections()
+      return new Promise(resolve => server.close(resolve))
+    })
+
+    const connect = buildConnector({
+      ca: fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'ca.pem')),
+      servername: 'agent1'
+    })
+    let socket
+    const client = new Client(`https://127.0.0.1:${server.address().port}`, {
+      headersTimeout: 0,
+      bodyTimeout: 0,
+      connect (opts, callback) {
+        socket = connect(opts, callback)
+        return socket
+      }
+    })
+    t.after(() => client.destroy())
+
+    const response = client.request({ path: '/', method: 'GET' }).catch(err => err)
+    await received.promise
+    const result = afterHeaders ? (await response).body.text().catch(err => err) : response
+
+    const failedSocket = socket
+    const failure = new Error('socket failed')
+    let errors = 0
+    failedSocket.on('error', () => { errors++ })
+    // Some sockets report an error without closing themselves.
+    failedSocket.emit('error', failure)
+    assert.strictEqual(failedSocket.destroyed, true)
+    assert.strictEqual(await result, failure)
+
+    const next = await client.request({ path: '/next', method: 'GET' })
+    assert.strictEqual(await next.body.text(), 'next')
+    assert.notStrictEqual(socket, failedSocket)
+    assert.strictEqual(errors, 1)
+    await client.close()
+  })
+}
